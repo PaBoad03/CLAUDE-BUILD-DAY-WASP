@@ -1,0 +1,11 @@
+{
+  "name": "@wasp/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared WASP contracts: agents, events, shared context, permissions, audit. Owned by CYAN (Pablo). Proposed by GREEN (Juanda).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts"
+}
