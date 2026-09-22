@@ -1,17 +1,53 @@
-import type { SandboxState, ToolResult, ToolStatus } from './contracts.js';
-import { ToolRegistry } from './registry.js';
-import {
-  EXTERNAL_NETWORK, LAB_NETWORK, SANDBOX_NAME, TARGET_NAME,
-  type ExecOutcome, type SandboxDriver,
-} from './docker.js';
+import type { SandboxState, ToolResult } from '@wasp/shared-types';
+import { ToolRegistry } from './registry';
+import { EXTERNAL_NETWORK, LAB_NETWORK, SANDBOX_IMAGE, SANDBOX_NAME, TARGET_NAME, type ExecOutcome, type SandboxDriver } from './docker';
 
 type Args = Record<string, string | number>;
+
+/**
+ * success      ran, and the test passed
+ * failure      ran, and the test failed (e.g. 100% packet loss)
+ * error        could not run to completion (timeout, docker error)
+ * unavailable  capability missing (Docker offline, sandbox not created)
+ * rejected     never reached execution: unknown tool / bad args
+ */
+export type ExecutionStatus = 'success' | 'failure' | 'error' | 'unavailable' | 'rejected';
+
+/** Rich, ORANGE-internal result of one execution. Mapped to the shared `ToolResult` by toToolResult(). */
+export interface ExecutionResult {
+  request_id: string;
+  tool: string;
+  args: Record<string, unknown>;
+  status: ExecutionStatus;
+  started_at: string;
+  finished_at: string;
+  /** Exact argv executed, or [] when nothing ran. Never fabricated. */
+  command: string[];
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  /** One line suitable for TTS and the RESULT window. */
+  summary: string;
+  /** Parsed, tool-specific facts (packet loss, http code, ...). */
+  data: Record<string, unknown>;
+}
+
+/** What the lab looks like right now, as seen through the driver. */
+export interface LabState {
+  docker_available: boolean;
+  docker_version?: string;
+  container: 'absent' | 'running' | 'stopped' | 'unknown';
+  network: 'none' | 'internal' | 'external';
+  target_available: boolean;
+  last_error?: string;
+  updated_at: string;
+}
 
 interface Runner {
   /** Whether this tool needs a running sandbox container. */
   needsSandbox: boolean;
   argv?: (a: Args) => string[];
-  run: (a: Args, ctx: RunCtx) => Promise<Partial<ToolResult> & { status: ToolStatus; summary: string }>;
+  run: (a: Args, ctx: RunCtx) => Promise<Partial<ExecutionResult> & { status: ExecutionStatus; summary: string }>;
 }
 
 interface RunCtx {
@@ -30,8 +66,8 @@ const RUNNERS: Record<string, Runner> = {
   sandbox_status: {
     needsSandbox: false,
     run: async (_a, { driver }) => {
-      const state = await sandboxState(driver);
-      const status: ToolStatus = state.docker_available ? 'success' : 'unavailable';
+      const state = await labState(driver);
+      const status: ExecutionStatus = state.docker_available ? 'success' : 'unavailable';
       const summary = state.docker_available
         ? `Docker ${state.docker_version} available. Sandbox ${state.container}, network ${state.network}, target ${state.target_available ? 'up' : 'down'}.`
         : `Docker capability is unavailable: ${state.last_error ?? 'unknown error'}.`;
@@ -39,7 +75,7 @@ const RUNNERS: Record<string, Runner> = {
     },
   },
 
-  sandbox_create: {
+  docker_sandbox: {
     needsSandbox: false,
     run: async (_a, { driver }) => {
       const avail = await driver.availability();
@@ -48,7 +84,11 @@ const RUNNERS: Record<string, Runner> = {
       }
       await driver.ensureLabNetwork();
       let targetUp = true;
-      try { await driver.ensureTarget(); } catch (e) { targetUp = false; }
+      try {
+        await driver.ensureTarget();
+      } catch {
+        targetUp = false;
+      }
       const r = await driver.createSandbox();
       const ok = r.exit_code === 0;
       // nginx needs a moment on first start; wait (bounded) so the first HTTP test is fair.
@@ -91,9 +131,7 @@ const RUNNERS: Record<string, Runner> = {
       const pass = r.exit_code === 0 && loss !== null && loss < 100;
       return {
         status: r.timed_out ? 'error' : pass ? 'success' : 'failure',
-        summary: m
-          ? `Ping ${a.target}: ${sent} sent, ${recv} received, ${pct(loss!)} loss. ${pass ? 'PASS' : 'FAIL'}.`
-          : `Ping ${a.target} produced no parseable output. ${firstLine(r.stderr)}`,
+        summary: m ? `Ping ${a.target}: ${sent} sent, ${recv} received, ${pct(loss!)} loss. ${pass ? 'PASS' : 'FAIL'}.` : `Ping ${a.target} produced no parseable output. ${firstLine(r.stderr)}`,
         ...outcome(r),
         data: { target: a.target, packets_sent: sent, packets_received: recv, loss_pct: loss, pass },
       };
@@ -122,10 +160,14 @@ const RUNNERS: Record<string, Runner> = {
     argv: () => ['ip', '-o', 'addr', 'show'],
     run: async (_a, { driver, argv }) => {
       const r = await driver.execInSandbox(argv);
-      const ifaces = r.stdout.split('\n').filter(Boolean).map((l) => {
-        const m = /^\d+:\s+(\S+)\s+inet6?\s+(\S+)/.exec(l);
-        return m ? { name: m[1], address: m[2] } : null;
-      }).filter(Boolean);
+      const ifaces = r.stdout
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => {
+          const m = /^\d+:\s+(\S+)\s+inet6?\s+(\S+)/.exec(l);
+          return m ? { name: m[1], address: m[2] } : null;
+        })
+        .filter(Boolean);
       return { status: r.exit_code === 0 ? 'success' : 'error', summary: `${ifaces.length} interface addresses found.`, ...outcome(r), data: { interfaces: ifaces } };
     },
   },
@@ -201,19 +243,55 @@ function firstLine(s: string): string {
   return (s || '').trim().split('\n')[0] ?? '';
 }
 
-export async function sandboxState(driver: SandboxDriver): Promise<SandboxState> {
+export async function labState(driver: SandboxDriver): Promise<LabState> {
   const now = new Date().toISOString();
   const avail = await driver.availability();
   if (!avail.available) {
     return { docker_available: false, container: 'unknown', network: 'none', target_available: false, last_error: avail.error, updated_at: now };
   }
-  const [container, target, nets] = await Promise.all([
-    driver.containerState(SANDBOX_NAME),
-    driver.containerState(TARGET_NAME),
-    driver.sandboxNetworks(),
-  ]);
+  const [container, target, nets] = await Promise.all([driver.containerState(SANDBOX_NAME), driver.containerState(TARGET_NAME), driver.sandboxNetworks()]);
   const network = container !== 'running' || nets.length === 0 ? 'none' : nets.includes(EXTERNAL_NETWORK) ? 'external' : 'internal';
   return { docker_available: true, docker_version: avail.version, container, network, target_available: target === 'running', updated_at: now };
+}
+
+/** LabState → the shared-contract SandboxState (what goes on the bus / in SharedContext.sandbox). */
+export function toSandboxState(lab: LabState, last_test?: ToolResult): SandboxState {
+  if (!lab.docker_available) {
+    return { available: false, status: 'OFFLINE', network: 'NONE', message: `Docker capability is unavailable: ${lab.last_error ?? 'unknown error'}`, last_test };
+  }
+  const status: SandboxState['status'] = lab.container === 'running' ? 'RUNNING' : lab.container === 'unknown' ? 'ERROR' : 'STOPPED';
+  return {
+    available: true,
+    status,
+    image: SANDBOX_IMAGE,
+    container_id: lab.container === 'absent' ? undefined : SANDBOX_NAME,
+    network: lab.network === 'internal' ? 'CONTROLLED' : lab.network === 'external' ? 'EXTERNAL' : 'NONE',
+    docker_version: lab.docker_version,
+    target_available: lab.target_available,
+    message: lab.container === 'running' ? `Docker ${lab.docker_version}, ${lab.network === 'internal' ? 'isolated lab network (no egress)' : lab.network === 'external' ? 'EXTERNAL network attached' : 'no network'}` : `Docker ${lab.docker_version}, sandbox ${lab.container}`,
+    last_test,
+  };
+}
+
+/** ExecutionResult → the shared-contract ToolResult (emitted as tool_finished / sandbox_result). */
+export function toToolResult(r: ExecutionResult, extra: { permission_id?: string; stub?: boolean } = {}): ToolResult {
+  const status: ToolResult['status'] = r.status === 'error' ? 'failure' : r.status;
+  return {
+    tool_id: r.tool,
+    request_id: r.request_id,
+    status,
+    output: { stdout: r.stdout, stderr: r.stderr, data: r.data },
+    error: r.status === 'success' ? undefined : r.summary,
+    summary: r.summary,
+    command: r.command,
+    exit_code: r.exit_code,
+    input: r.args,
+    permission_id: extra.permission_id,
+    started_at: r.started_at,
+    finished_at: r.finished_at,
+    duration_ms: Math.max(0, Date.parse(r.finished_at) - Date.parse(r.started_at)),
+    stub: extra.stub || undefined,
+  };
 }
 
 export interface ExecuteInput {
@@ -228,13 +306,15 @@ export interface ExecuteInput {
  * It does NOT check authorization — that is the agent's job, before calling this.
  */
 export class ToolExecutor {
-  constructor(private readonly registry: ToolRegistry, private readonly driver: SandboxDriver) {}
+  constructor(
+    private readonly registry: ToolRegistry,
+    private readonly driver: SandboxDriver,
+  ) {}
 
-  async execute(input: ExecuteInput): Promise<ToolResult> {
+  async execute(input: ExecuteInput): Promise<ExecutionResult> {
     const started_at = new Date().toISOString();
     const base = { request_id: input.request_id, tool: input.tool, args: input.args ?? {}, started_at, command: [] as string[], exit_code: null, stdout: '', stderr: '', data: {} as Record<string, unknown> };
-    const finish = (p: Partial<ToolResult> & { status: ToolStatus; summary: string }): ToolResult =>
-      ({ ...base, ...p, finished_at: new Date().toISOString() } as ToolResult);
+    const finish = (p: Partial<ExecutionResult> & { status: ExecutionStatus; summary: string }): ExecutionResult => ({ ...base, ...p, finished_at: new Date().toISOString() }) as ExecutionResult;
 
     const v = this.registry.validate(input.tool, input.args ?? {});
     if (!v.ok) return finish({ status: 'rejected', summary: `Rejected: ${v.errors.join('; ')}`, data: { errors: v.errors } });
@@ -250,7 +330,7 @@ export class ToolExecutor {
       const avail = await this.driver.availability();
       if (!avail.available) return finish({ status: 'unavailable', summary: `Docker capability is unavailable: ${avail.error}. Cannot run ${input.tool}.`, data: { docker: avail } });
       const state = await this.driver.containerState(SANDBOX_NAME);
-      if (state !== 'running') return finish({ status: 'unavailable', summary: `Sandbox is ${state}. Run sandbox_create first.`, data: { container: state } });
+      if (state !== 'running') return finish({ status: 'unavailable', summary: `Sandbox is ${state}. Run docker_sandbox first.`, data: { container: state } });
     }
 
     try {

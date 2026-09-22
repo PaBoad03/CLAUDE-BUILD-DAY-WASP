@@ -3,12 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "GREEN audit log: records WHO/WHAT/WHY/WHEN/TOOL/INPUT/AUTHORIZATION/RESULT from bus events. Owner: Juanda.",
+  "description": "GREEN audit view: consumes audit_event from the hub stream, answers WHO/WHAT/WHY/WHEN/TOOL/AUTHORIZATION/RESULT, guards lab.validated claims. Owner: Juanda.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
-  "types": "./src/index.ts",
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts"
+  },
   "dependencies": {
+    "@wasp/event-bus": "*",
     "@wasp/shared-types": "*"
   }
 }

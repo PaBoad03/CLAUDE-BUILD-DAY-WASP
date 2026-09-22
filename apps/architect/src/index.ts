@@ -86,7 +86,14 @@ try {
 hub.setState('COMMUNICATING');
 hub.say('operator', 'Operator, can you validate the connectivity exercise in our sandbox?', 'validation_request');
 try {
-  const v = await hub.request('validation_request', { request_id: newId('req'), description: 'ping 127.0.0.1 and DNS resolution inside an isolated Linux container', tools: ['docker_sandbox', 'sandbox_ping'] }, { to: 'operator', expect: 'validation_result', timeoutMs: 180_000 });
+  // No `tools`: ORANGE runs its default plan (docker_sandbox → ping → dns → http → routes).
+  // `research_ids`: a real successful validation flips those results FOUND → VERIFIED in the hub.
+  const research_ids = research?.results.filter((r) => !r.stub).map((r) => r.id);
+  const v = await hub.request(
+    'validation_request',
+    { request_id: newId('req'), description: 'ping 127.0.0.1, DNS and HTTP against the local target inside an isolated Linux container', research_ids: research_ids?.length ? research_ids : undefined },
+    { to: 'operator', expect: 'validation_result', timeoutMs: 300_000 },
+  );
   validation = v.payload;
   log(`validation: validated=${validation.validated}${validation.stub ? ' [STUB]' : ''} — ${validation.summary}`);
 } catch (err) {

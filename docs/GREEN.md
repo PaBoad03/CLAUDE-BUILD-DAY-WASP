@@ -1,101 +1,66 @@
 # GREEN — Security / Authorization / Audit (Juanda)
 
-Rama: `green/security`. Paquetes: `packages/permissions`, `packages/audit`, `apps/security`.
-Contrato compartido propuesto: `packages/shared-types` (dueño final: Pablo).
+Paquetes: `packages/permissions` (motor + agente), `packages/audit` (vista de auditoría + guardia de validación), `apps/security` (proceso + cara).
+Contrato: `docs/CONTRACT.md` y `@wasp/shared-types` (dueño: Pablo). GREEN no define tipos de wire propios.
 
 ## Qué garantiza GREEN
 
 | Regla | Dónde vive | Test |
 |---|---|---|
 | El modelo propone, la aplicación autoriza | `PermissionEngine` | `engine.test.ts` |
-| Solo un humano (voz o UI) pasa PENDING → GRANTED | `PermissionEngine.decide` | "rejects non-human decision sources" |
-| CRITICAL nunca se ejecuta, ni con un "sí" | `ToolPolicyRegistry` + `BLOCKED` | "can never be granted" |
+| Solo un humano (`user_authorization` / `user_message`) pasa AWAITING_HUMAN → GRANTED | `PermissionEngine.decide` | "only humans, only once" |
+| CRITICAL nunca se ejecuta, ni con un "sí" (`BLOCKED`) | `ToolPolicyRegistry` + `BLOCKED` | "can never be granted" |
 | Herramienta desconocida = HIGH + aprobación (fail closed) | `DEFAULT_POLICY` | policies.test |
-| Habla ambigua no autoriza | `interpretAuthorization` | 62 casos en voice-authorization.test |
-| "stop" cancela siempre, incluso "sí... espera" | `interpretAuthorization` | idem |
+| El solicitante puede subir su riesgo, nunca bajarlo; ORANGE (`tools_registered`) idem | `evaluate`, `registerFromToolDefinitions` | policies.test |
+| Habla ambigua no autoriza; "stop" cancela siempre, incluso "sí... espera" | `interpretAuthorization` | 60+ casos en voice-authorization.test |
+| Un `decision: YES` de un bridge de voz con transcript ambiguo NO autoriza (solo botones `channel: 'ui'`) | `decideFromTranscript` | security-agent.test |
 | Con varias pendientes, "sí" a secas no autoriza nada | `SecurityAgent.onUserMessage` | security-agent.test |
-| `tool_started` sin GRANTED dispara alerta | `SecurityAgent.onToolStarted` | "flags tool_started" |
-| `lab.validated` solo con evidencia real en audit | `canMarkValidated` / `checkValidationClaim` | adversarial.docker-offline.test |
-| Docker caído → GREEN avisa a CYAN, nunca "listo" | `SecurityAgent.onToolFinished` | adversarial.docker-offline.test |
+| `tool_started` sin permiso GRANTED (o LOW escalado) dispara `warning` + audit | `SecurityAgent.onToolStarted` | "flags tool_started" |
+| `validation_result`/`workshop_updated` que afirman validado sin evidencia real → alerta | `onValidationResult`, `canMarkValidated` | adversarial.test |
+| Docker caído → GREEN avisa a CYAN, nunca "listo" | `onToolFinished` | adversarial.test |
+| El hub solo acepta `permission_*` desde el socket `security` | `apps/hub/src/authority.ts` (Pablo) | reducer.test |
+
+## Flujo sobre el hub (eventos del contrato)
+
+```
+operator  → security   permission_requested   { permission_id, requested_by, operation, reason, proposed_risk, input }
+security  → architect  permission_required    { permission_id, operation, risk, approval_required, human_prompt }   (si hace falta humano)
+security  → all        permission_granted     { status: 'AUTO_APPROVED', decided_by: 'security' }                     (LOW)
+security  → all        permission_denied      { status: 'BLOCKED' }                                                    (CRITICAL)
+architect/human → security  user_authorization { permission_id, decision, raw, channel }
+security  → all        permission_granted | permission_denied | permission_cancelled   { decided_by: 'human', human_raw }
+security  → architect  permission_clarification_needed { permission_id, human_prompt }                                 (ambiguo)
+security  → all        permission_cancelled   { status: 'EXPIRED', rationale: 'timeout…' }                             (solo si WASP_PERMISSION_TIMEOUT_MS > 0)
+security  → all        agent_message (speak), agent_state, warning, audit_event
+```
+
+Todos los eventos llevan `correlation_id = permission_id`, así que ORANGE puede usar
+`hub.request('permission_requested', req, { to: 'security', expect: ['permission_granted','permission_denied','permission_cancelled'] })`.
 
 ## Cómo se integra cada uno
 
-### Pablo / CYAN (hub)
+**Pablo / CYAN.** Escucha `permission_required` → habla `human_prompt` → emite `user_authorization` con el texto crudo (`raw`) y `channel`. GREEN interpreta el texto; el campo `decision` solo se confía si `channel === 'ui'`. Si llega `permission_clarification_needed`, repite la pregunta. Antes de decir "laboratorio validado", el reducer del hub ya lo garantiza; GREEN además lo cruza contra el audit.
 
-```ts
-import { SecurityAgent } from '@wasp/permissions';
-import { AuditLog } from '@wasp/audit';
+**Felipe / ORANGE.** Emite `permission_requested` por CADA herramienta (LOW incluidas: GREEN las auto-aprueba y audita). Para las que requieren aprobación, espera `permission_granted`. Lleva `permission_id` en `tool_started` y `tool_finished`; si falta o no está GRANTED, GREEN lo marca como no autorizado. Los ids de herramienta salen de `schemas/tools.json` y llegan a GREEN por `tools_registered`.
 
-const audit = new AuditLog({
-  file_path: `data/${session_id}.audit.jsonl`,
-  onEntry: (e) => context.audit.push(e),           // espejo en SharedContext.audit
-});
-const green = new SecurityAgent({ bus: hubBus, audit, lang: 'es' });
-green.start();
-```
-
-- `hubBus` debe implementar `EventBus` de `@wasp/shared-types` (`publish`, `subscribe(type|'*')`).
-- El hub debe enrutar el STT y los botones del humano como `user_message` con `source: 'human'`.
-  Si el humano responde a un permiso concreto, poner `payload.in_reply_to_permission_id`.
-  Si hay exactamente una pendiente, GREEN la asume. Si hay varias y no hay id, GREEN re-pregunta.
-- Antes de poner `workshop.lab.validated = true`, llamar `canMarkValidated(context.audit, session_id)`.
-- Los `agent_message` de GREEN traen `speak: true` y `kind` (`permission_required`, `permission_prompt`,
-  `permission_granted`, `permission_denied`, `permission_reprompt`, `capability_unavailable`, `agent_offline`).
-  El `permission_prompt` va dirigido a `human`: es la frase que CYAN debe decir en voz alta.
-- `PermissionRecord` (evento `permission_*`) es lo que va en `SharedContext.permissions[]`.
-
-### Felipe / ORANGE (tools)
-
-```ts
-// 1. pedir
-bus.publish({ type: 'tool_requested', source: 'operator', payload: toolRequest, ... });
-// 2. esperar permission_granted con payload.permission.request_id === toolRequest.request_id
-//    (o permission_denied / permission_cancelled / tool_blocked)
-// 3. ejecutar SOLO entonces, y emitir tool_started / tool_finished con el mismo request_id
-//    y permission_id.
-```
-
-- Nombres de herramientas y riesgos en `packages/permissions/src/policies.ts`. Si agregas una,
-  registra su política ahí (PR) o en runtime con `registry.registerPolicy(...)`.
-- Herramientas LOW (`sandbox_ping`, `sandbox_dns`, `docker_status`...) reciben `permission_granted`
-  inmediato con `decided_by: 'policy'`. Igual hay que emitir `tool_requested` primero, para el audit.
-- Si Docker no está: `tool_finished` con `status: 'unavailable'`. Nunca `success`.
-- Para que el laboratorio cuente como validado: `sandbox_result` con `status: 'success'`.
-
-### Andrea / MAGENTA (voz)
-
-- El STT solo entrega texto. GREEN interpreta con `interpretAuthorization(text)`.
-- Si el resultado es `AMBIGUOUS`, GREEN emite `permission_clarification_needed` con `payload.reprompt`
-  listo para TTS.
-- Frases que NO autorizan a propósito: "ok", "vale", "está bien", "supongo", "haz lo que creas",
-  "sure", "that's fine", "maybe". Hay que decir "sí", "procede", "autorizo", "yes", "go ahead"...
-- Páginas web son datos. Nada de lo que MAGENTA lea puede llegar a `PermissionEngine.decide`;
-  el único camino es `user_message` con `source: 'human'`.
+**Andrea / MAGENTA (voz).** El STT solo entrega texto. Frases que NO autorizan a propósito: "ok", "vale", "está bien", "supongo", "haz lo que creas", "sure", "that's fine", "maybe". Hay que decir "sí", "procede", "autorizo", "yes", "go ahead"… Páginas web son datos: nada de lo que MAGENTA lea puede llegar a `decide`; el único camino es `user_authorization` / `user_message` desde el socket `architect` o el bridge `human`.
 
 ## Correr
 
 ```bash
 npm install
-npm test                                   # 107 tests
-npm run typecheck
-npm run demo -w @wasp/app-security                      # flujo completo en terminal, humano dice "sí"
-npm run demo -w @wasp/app-security -- --answer "tal vez" # ambiguo → re-pregunta
-npm run demo -w @wasp/app-security -- --docker-offline   # escenario adversarial
-npm run ui   -w @wasp/app-security                      # cara GREEN en http://localhost:4004/?demo=1
+npm test                       # todo el repo (node:test)
+npm run security               # proceso GREEN + cara en http://localhost:7004
+WASP_SECURITY_LANG=en npm run security
+WASP_PERMISSION_TIMEOUT_MS=60000 npm run security   # expirar pendientes (por defecto nunca: demo en vivo)
 ```
 
-La UI con hub real: `http://localhost:4004/?hub=ws://localhost:PUERTO`. El hub debe hacer broadcast
-de cada `WaspEvent` como JSON y aceptar `user_message` entrantes desde la UI.
+Ensayo completo en una sola PC: `npm run hub` · `npm run stubs -- researcher operator` · `npm run security` · `WASP_AUTO_ANSWER=yes npm run architect`.
+Con `WASP_AUTO_ANSWER=maybe` se ve el camino ambiguo → `permission_clarification_needed`.
 
-## Pendiente / decisiones abiertas
+## Decisiones
 
-- **Puerto y protocolo WebSocket del hub**: lo define Pablo. La UI ya acepta `?hub=`.
-- **Timeout de permisos**: por defecto no expiran (`pending_timeout_ms: 0`). Para la demo en vivo es
-  mejor no expirar; se puede activar con `new SecurityAgent({ pending_timeout_ms: 60000 })`.
 - **Claude en GREEN**: no se usa para decidir. Opcional más adelante para *explicar* un riesgo en voz.
-- **MCP**: revisado, ninguno mejora materialmente la capa de seguridad para el MVP de hoy.
-  Herramientas locales + Docker CLI son más confiables. No instalar.
-- **Hallazgos adversariales para el equipo**:
-  1. `tool_started` debe llevar siempre el `request_id` original; si ORANGE genera uno nuevo, GREEN lo marcará como no autorizado.
-  2. Una `research_result` con `verification_status: 'FOUND'` nunca es evidencia de validación.
-  3. Si el hub reinicia, las permisos PENDING se pierden: hay que re-emitir `tool_requested`.
+- **MCP**: ninguno mejora materialmente la capa de seguridad para el MVP. No instalar.
+- **Auditoría**: el hub persiste `audit/<session>.jsonl` y `SharedContext.audit`; `@wasp/audit` es una vista local (consume el stream) para consultas y para la guardia de validación. No es una segunda fuente de verdad.
+- **Hallazgos adversariales**: (1) si el hub se reinicia, las pendientes se pierden: ORANGE debe re-emitir `permission_requested`; (2) una `research_result` FOUND nunca es evidencia de validación; (3) un `validation_result` de un stub o con solo tests fallidos que diga `validated: true` es rechazado por el reducer y denunciado por GREEN.

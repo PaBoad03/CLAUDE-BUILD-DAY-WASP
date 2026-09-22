@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import type { RiskLevel } from './contracts.js';
+import type { RiskLevel, ToolDefinition } from '@wasp/shared-types';
 
 export interface ArgSpec {
   type: 'string' | 'integer';
@@ -27,14 +27,11 @@ export interface RegistryFile {
   tools: ToolSpec[];
 }
 
-export type ValidationResult =
+export type ArgValidation =
   | { ok: true; args: Record<string, string | number> }
   | { ok: false; errors: string[] };
 
-const DEFAULT_PATH = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  '../../../schemas/tools.json',
-);
+const DEFAULT_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../../schemas/tools.json');
 
 /**
  * Tool registry backed by schemas/tools.json.
@@ -57,12 +54,7 @@ export class ToolRegistry {
   }
 
   static fromSpecs(tools: ToolSpec[]): ToolRegistry {
-    return new ToolRegistry({
-      version: 0,
-      owner: 'test',
-      risk_levels: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'],
-      tools,
-    });
+    return new ToolRegistry({ version: 0, owner: 'test', risk_levels: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'], tools });
   }
 
   list(): ToolSpec[] {
@@ -77,8 +69,25 @@ export class ToolRegistry {
     return this.tools.has(name);
   }
 
+  /**
+   * The registry as the shared-contract `ToolDefinition[]` (emitted as `tools_registered`).
+   * `available` reflects whether Docker is reachable right now; GREEN reads risk/requires_approval from here.
+   */
+  toToolDefinitions(opts: { available: boolean; unavailable_reason?: string }): ToolDefinition[] {
+    return this.list().map((t) => ({
+      id: t.name,
+      description: t.description,
+      owner: 'operator',
+      risk: t.risk,
+      requires_approval: t.requires_approval,
+      input_schema: toJsonSchema(t.args),
+      available: opts.available,
+      unavailable_reason: opts.available ? undefined : opts.unavailable_reason ?? 'Docker unavailable',
+    }));
+  }
+
   /** Validate and normalise args. Unknown keys are errors, not ignored. */
-  validate(name: string, raw: Record<string, unknown>): ValidationResult {
+  validate(name: string, raw: Record<string, unknown>): ArgValidation {
     const spec = this.tools.get(name);
     if (!spec) return { ok: false, errors: [`unknown tool "${name}"`] };
 
@@ -93,19 +102,30 @@ export class ToolRegistry {
       let v = raw?.[key];
       if (v === undefined || v === null) {
         if (a.default !== undefined) v = a.default;
-        else if (a.required) { errors.push(`missing required argument "${key}"`); continue; }
-        else continue;
+        else if (a.required) {
+          errors.push(`missing required argument "${key}"`);
+          continue;
+        } else continue;
       }
 
       if (a.type === 'integer') {
         if (typeof v === 'string' && /^\d+$/.test(v)) v = Number(v);
-        if (typeof v !== 'number' || !Number.isInteger(v)) { errors.push(`"${key}" must be an integer`); continue; }
+        if (typeof v !== 'number' || !Number.isInteger(v)) {
+          errors.push(`"${key}" must be an integer`);
+          continue;
+        }
         if (a.min !== undefined && v < a.min) errors.push(`"${key}" below minimum ${a.min}`);
         if (a.max !== undefined && v > a.max) errors.push(`"${key}" above maximum ${a.max}`);
       } else {
-        if (typeof v !== 'string') { errors.push(`"${key}" must be a string`); continue; }
+        if (typeof v !== 'string') {
+          errors.push(`"${key}" must be a string`);
+          continue;
+        }
         // Defensive: even allowlisted values are checked for shell-ish noise.
-        if (!/^[A-Za-z0-9.:/_-]+$/.test(v)) { errors.push(`"${key}" contains disallowed characters`); continue; }
+        if (!/^[A-Za-z0-9.:/_-]+$/.test(v)) {
+          errors.push(`"${key}" contains disallowed characters`);
+          continue;
+        }
       }
 
       if (a.allowed && !a.allowed.includes(v as string | number)) {
@@ -117,4 +137,20 @@ export class ToolRegistry {
 
     return errors.length ? { ok: false, errors } : { ok: true, args: out };
   }
+}
+
+/** ArgSpec map → JSON Schema (also usable as a Claude tool input_schema). */
+export function toJsonSchema(args: Record<string, ArgSpec>): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const [k, a] of Object.entries(args)) {
+    const p: Record<string, unknown> = { type: a.type === 'integer' ? 'integer' : 'string' };
+    if (a.allowed) p.enum = a.allowed;
+    if (a.min !== undefined) p.minimum = a.min;
+    if (a.max !== undefined) p.maximum = a.max;
+    if (a.default !== undefined) p.default = a.default;
+    properties[k] = p;
+    if (a.required) required.push(k);
+  }
+  return { type: 'object', properties, required, additionalProperties: false };
 }

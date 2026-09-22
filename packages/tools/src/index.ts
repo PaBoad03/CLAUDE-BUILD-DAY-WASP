@@ -1,4 +1,4 @@
-export * from './contracts.js';
-export * from './registry.js';
-export * from './docker.js';
-export * from './executor.js';
+export * from './registry';
+export * from './docker';
+export * from './executor';
+export { FakeDriver } from './testing/fake-driver';

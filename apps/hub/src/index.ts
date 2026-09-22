@@ -60,6 +60,11 @@ function hubEvent<T extends EventType>(type: T, payload: EventPayloads[T], to: P
   return { id: newId('evt'), type, session_id, from: 'hub', to, timestamp: nowIso(), payload, correlation_id };
 }
 
+/** UI windows register as their agent with meta.role = 'ui' (docs/CONTRACT.md §2). */
+function isUiSocket(reg: AgentRegistration): boolean {
+  return (reg.meta as { role?: unknown } | undefined)?.role === 'ui';
+}
+
 function broadcast(evt: AnyEvent, except?: WebSocket) {
   const raw = JSON.stringify(evt);
   for (const [ws] of clients) {
@@ -136,8 +141,13 @@ function handleIncoming(ws: WebSocket, raw: string) {
     }
     const p = evt.payload;
     clients.set(ws, p);
-    log(`agent connected: ${p.agent} (${p.mode})`);
-    accept({ ...evt, type: 'agent_registered' } as AnyEvent);
+    if (isUiSocket(p)) {
+      // A UI window: viewer only. It gets the stream but never counts as the agent being online.
+      log(`ui connected: ${p.agent}`);
+    } else {
+      log(`agent connected: ${p.agent} (${p.mode})`);
+      accept({ ...evt, type: 'agent_registered' } as AnyEvent);
+    }
     sendTo(ws, hubEvent('session_snapshot', { context, recent_events: recent.slice(-100) }, p.agent));
     return;
   }
@@ -159,8 +169,9 @@ function handleClose(ws: WebSocket) {
   const reg = clients.get(ws);
   clients.delete(ws);
   if (!reg) return;
-  // Only mark offline if no other socket for the same agent remains.
-  const stillConnected = [...clients.values()].some((r) => r?.agent === reg.agent);
+  if (isUiSocket(reg)) return; // viewers do not affect presence
+  // Only mark offline if no other (non-UI) socket for the same agent remains.
+  const stillConnected = [...clients.values()].some((r) => r && r.agent === reg.agent && !isUiSocket(r));
   if (stillConnected) return;
   log(`agent disconnected: ${reg.agent}`);
   accept(hubEvent('agent_offline', { agent: reg.agent as AgentId, mode: reg.mode, reason: 'socket closed' }));

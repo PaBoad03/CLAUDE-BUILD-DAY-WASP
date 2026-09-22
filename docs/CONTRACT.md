@@ -39,6 +39,8 @@ const res = await hub.request('permission_requested', req, { to: 'security', exp
 
 First message on a socket must be `agent_registered` (the client does it for you). Register with `mode: 'stub'` only for fake responders.
 
+**UI windows** connect as their agent with `meta: { role: 'ui' }` (`new HubClient({ agent: 'operator', meta: { role: 'ui' } })` or a raw `agent_registered` frame). The hub streams everything to them but they **do not count as presence**: `agents.operator.status` reflects only the agent process. UIs emit only `tts_*`; human input (buttons, mic) enters through `POST /events` as `from: 'human'` (`user_message`, `user_authorization`). See `apps/security/ui/index.html` for the pattern.
+
 `hub.request()` throws `AgentUnavailableError` if the target is offline and `RequestTimeoutError` on silence. **Do not catch these and pretend it worked.** Say the agent is offline.
 
 ## 3. The envelope
@@ -124,7 +126,31 @@ npm run architect -- "WASP, create a two-hour beginner network reconnaissance wo
 npm test && npm run typecheck
 ```
 
-## 8. Adding something to the contract
+## 8. Tool ids (ORANGE registry, GREEN policy, CYAN plans — one vocabulary)
+
+`schemas/tools.json` is the registry. ORANGE emits it as `tools_registered`; GREEN merges it into its policies (may escalate, never lower). Use these ids in `PermissionRequest.operation`, `ToolRequest.tool_id`, `ValidationRequest.tools`:
+
+| id | risk | approval |
+|---|---|---|
+| `sandbox_status`, `sandbox_ping`, `sandbox_dns`, `sandbox_http`, `sandbox_routes`, `sandbox_interfaces`, `sandbox_destroy` | LOW | no (GREEN auto-approves and audits) |
+| `docker_sandbox` | MEDIUM | **human** |
+| `sandbox_port_check` | LOW (ORANGE) / MEDIUM (GREEN) | human |
+| `sandbox_network_external` | HIGH | **human** |
+| `host_shell`, `external_scan`, `destructive` | CRITICAL | **BLOCKED**, even with a human yes |
+
+A `validation_request` without `tools` makes ORANGE run `docker_sandbox → sandbox_ping → sandbox_dns → sandbox_http → sandbox_routes` and stop at the first non-success.
+
+## 9. Changelog
+
+**v1.1 — 2026-09-22 (integration of magenta / orange / green).** All additive:
+- `ResearchResult.warnings?`, `retrieved_at?`; `ResearchSummary.mode?`, `degraded?`, `degraded_reason?`, `official_count?` (MAGENTA).
+- `ToolStatus` gains `rejected` (never reached execution). `ToolResult` gains `summary?`, `command?` (exact argv), `exit_code?`, `input?`, `permission_id?`. `SandboxState` gains `docker_version?`, `target_available?`. `ToolRequest.reason?`.
+- `ValidationRequest.research_ids?` → `ValidationResult.verifies_research_ids?`: the reducer flips those research results FOUND → VERIFIED only on a real, non-stub, successful validation.
+- `tool_started.permission_id?` so GREEN can check every start against a GRANTED permission.
+- `PermissionStatus` gains `BLOCKED`; `PermissionDecision.rationale?`. GREEN emits `permission_denied { status: 'BLOCKED' }` for CRITICAL and `permission_cancelled { status: 'EXPIRED' }` on timeout.
+- UI sockets (`meta.role = 'ui'`) no longer affect presence (§2). `@wasp/event-bus/testing` exports `FakeHub` for every agent's unit tests.
+
+## 10. Adding something to the contract
 
 1. Add the type in `packages/shared-types/src/*.ts` and, if it is an event, to `EventPayloads` + `EVENT_TYPES` in `events.ts`.
 2. If a specific agent must own it, add it to `apps/hub/src/authority.ts`.

@@ -44,9 +44,10 @@ Need something in a folder you don't own? Ask the owner in person or open a **ti
 ## Merge order for today
 
 1. Skeleton + contract (Pablo) → `main`. **Done.**
-2. Each agent's minimal real connection (registers, sets face state, answers its request type) → PR.
-3. Voice + UI packages (Andrea) → PR; others import.
-4. Docker + real tests (Felipe) → PR.
-5. Permission engine + audit + adversarial tests (Juanda) → PR.
-6. Claude API orchestration (Pablo) → PR.
-7. Polish, demo rehearsal, freeze `main` one hour before the demo.
+2. Each agent's minimal real connection (registers, sets face state, answers its request type). **Done 2026-09-22:** `magenta`, `feat/orange-sandbox` and `green/security` merged into `main` (ORANGE and GREEN rewired onto `@wasp/event-bus` + `@wasp/shared-types`; see `docs/CONTRACT.md` §9 and `docs/CORRECCIONES.md`). The old branches are obsolete: **branch again from `main`**.
+3. Voice + UI packages (Andrea: `packages/voice`, `packages/ui`) → PR; others import.
+4. Real Docker rehearsal on Felipe's PC (`npm run operator -- --build`, then `npm run operator`).
+5. Claude API orchestration in `apps/architect` (Pablo) → PR.
+6. Polish, demo rehearsal with four real processes, freeze `main` one hour before the demo.
+
+Since step 2, every agent has a root script: `npm run hub | architect | researcher | operator | security`, and `npm run stubs -- <agent>` for whoever is missing. `npm test` runs every package (node:test); MAGENTA's vitest suite: `npm test -w @wasp/researcher`.

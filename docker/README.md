@@ -19,9 +19,8 @@ Real Docker-based Linux lab used by the ORANGE operator agent.
 ## Pre-demo (do this once, on wifi, before the audience arrives)
 
 ```bash
-cd apps/operator
-npm install
-npm run sandbox:build      # builds wasp/sandbox:latest and pulls nginx:alpine
+npm install                       # repo root
+npm run operator -- --build       # builds wasp/sandbox:latest and pulls nginx:alpine
 ```
 
 Nothing is pulled during the live demo.

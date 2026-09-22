@@ -1,156 +1,205 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ToolRegistry, type PermissionDecision, type PermissionRequest, type ToolResult, type WaspEvent } from '@wasp/tools';
-import { FakeDriver } from '../../../packages/tools/test/fake-driver.js';
-import { InMemoryBus, makeEvent } from '../src/bus.js';
-import { OperatorAgent } from '../src/agent.js';
-import type { Speaker } from '../src/voice.js';
+import { FakeHub } from '@wasp/event-bus/testing';
+import { newId, nowIso, type PermissionDecision, type PermissionRequest, type ToolResult, type ValidationResult } from '@wasp/shared-types';
+import { FakeDriver, ToolRegistry } from '@wasp/tools';
+import { OperatorAgent } from '../src/agent';
 
-const SESSION = 'test-session';
-
-class SilentSpeaker implements Speaker {
-  spoken: string[] = [];
-  async speak(_a: string, t: string) { this.spoken.push(t); }
+/** A GREEN that answers every permission_requested the way the test says. */
+function green(hub: FakeHub, answer: 'grant' | 'deny' | 'cancel' | 'silent' | ((req: PermissionRequest) => 'grant' | 'deny' | 'cancel' | 'silent')) {
+  hub.responder = (evt) => {
+    if (evt.type !== 'permission_requested') return;
+    const req = evt.payload;
+    const a = typeof answer === 'function' ? answer(req) : answer;
+    if (a === 'silent') return;
+    const status = a === 'grant' ? 'GRANTED' : a === 'deny' ? 'DENIED' : 'CANCELLED';
+    const d: PermissionDecision = { permission_id: req.permission_id, operation: req.operation, requested_by: req.requested_by, status, risk: req.proposed_risk ?? 'MEDIUM', approval_required: true, decided_by: 'human', human_raw: a === 'grant' ? 'yes' : 'no', decided_at: nowIso() };
+    return hub.from('security', a === 'grant' ? 'permission_granted' : a === 'deny' ? 'permission_denied' : 'permission_cancelled', d, { correlation_id: req.permission_id });
+  };
 }
 
-async function setup(opts: { docker?: boolean; timeoutMs?: number } = {}) {
-  const bus = new InMemoryBus();
+async function setup(opts: { docker?: boolean; timeoutMs?: number; stub?: boolean } = {}) {
+  const hub = new FakeHub('operator');
   const driver = new FakeDriver();
   driver.dockerUp = opts.docker ?? true;
-  const speaker = new SilentSpeaker();
-  const agent = new OperatorAgent({ session_id: SESSION, bus, registry: ToolRegistry.load(), driver, speaker, permissionTimeoutMs: opts.timeoutMs ?? 200 });
+  const agent = new OperatorAgent({ hub, registry: ToolRegistry.load(), driver, permissionTimeoutMs: opts.timeoutMs ?? 200, stub: opts.stub });
   await agent.start();
-  await tick();
-  return { bus, driver, speaker, agent };
+  return { hub, driver, agent };
 }
 
-const tick = () => new Promise((r) => setTimeout(r, 5));
-
-function request(bus: InMemoryBus, tool: string, args: Record<string, unknown> = {}, type: 'tool_requested' | 'validation_request' = 'tool_requested') {
-  const request_id = `req-${tool}-${Math.random().toString(36).slice(2, 7)}`;
-  const finished = new Promise<ToolResult>((res) => {
-    const un = bus.subscribe((e) => { if (e.type === 'tool_finished' && (e.payload as ToolResult).request_id === request_id) { un(); res(e.payload as ToolResult); } });
-  });
-  void bus.publish(makeEvent(SESSION, type, 'architect', 'operator', { request_id, tool, args, reason: 'test', requested_by: 'architect' }));
-  return { request_id, finished };
+function toolRequest(hub: FakeHub, tool_id: string, input: Record<string, unknown> = {}) {
+  const request_id = newId('tool');
+  return { request_id, done: hub.deliver('tool_requested', { tool_id, request_id, requested_by: 'architect', input, reason: 'test' }, 'architect', 'operator') };
 }
 
-const types = (bus: InMemoryBus) => bus.log.map((e) => e.type);
+const lastFinished = (hub: FakeHub, request_id: string): ToolResult => hub.ofType('tool_finished').find((e) => e.payload.request_id === request_id)!.payload;
 
-test('LOW tool: permission_requested is emitted to security but execution does not wait', async () => {
-  const { bus, driver } = await setup();
-  driver.sandbox = 'running'; driver.networks = ['wasp-lab'];
-  const r = await request(bus, 'sandbox_ping', { target: '127.0.0.1' }).finished;
-  assert.equal(r.status, 'success');
-  const perm = bus.log.find((e) => e.type === 'permission_requested')!;
-  assert.equal(perm.to, 'security');
-  assert.equal((perm.payload as PermissionRequest).requires_approval, false);
-  assert.ok(types(bus).includes('tool_started'));
-  assert.ok(types(bus).includes('audit_event'));
+test('start: registers tools + sandbox_state, face IDLE when Docker is up', async () => {
+  const { hub } = await setup();
+  const reg = hub.ofType('tools_registered')[0].payload.tools;
+  assert.ok(reg.length >= 8);
+  assert.equal(reg.find((t) => t.id === 'docker_sandbox')!.requires_approval, true);
+  assert.equal(hub.ofType('sandbox_state')[0].payload.available, true);
+  assert.deepEqual(hub.states(), ['IDLE']);
 });
 
-test('MEDIUM tool without permission_granted never executes (times out)', async () => {
-  const { bus, driver } = await setup({ timeoutMs: 100 });
-  const r = await request(bus, 'sandbox_create').finished;
+test('Docker offline: honest sandbox_state OFFLINE, warning, face ERROR, validation_result validated=false', async () => {
+  const { hub } = await setup({ docker: false });
+  assert.equal(hub.ofType('sandbox_state')[0].payload.status, 'OFFLINE');
+  assert.ok(hub.ofType('warning').length >= 1);
+  assert.ok(hub.states().includes('ERROR'));
+  assert.ok(hub.said().some((m) => /Docker capability is unavailable/.test(m)));
+  await hub.deliver('validation_request', { request_id: 'v1', description: 'ping inside sandbox' }, 'architect', 'operator', 'v1');
+  const vr = hub.ofType('validation_result')[0];
+  assert.equal(vr.payload.validated, false);
+  assert.equal(vr.correlation_id, 'v1');
+  assert.equal(vr.to, 'architect');
+  assert.match(vr.payload.summary, /unavailable/);
+  assert.equal(hub.ofType('tool_started').length, 0);
+});
+
+test('LOW tool: permission_requested goes to security but execution does not wait for an answer', async () => {
+  const { hub, driver } = await setup();
+  green(hub, 'silent');
+  driver.sandbox = 'running';
+  driver.networks = ['wasp-lab'];
+  const { request_id, done } = toolRequest(hub, 'sandbox_ping', { target: '127.0.0.1' });
+  await done;
+  const r = lastFinished(hub, request_id);
+  assert.equal(r.status, 'success');
+  assert.deepEqual(r.command, ['ping', '-c', '4', '-W', '2', '127.0.0.1']);
+  const perm = hub.ofType('permission_requested')[0];
+  assert.equal(perm.to, 'security');
+  assert.equal(perm.payload.proposed_risk, 'LOW');
+  assert.ok(hub.ofType('tool_started').length === 1);
+  assert.ok(hub.ofType('sandbox_test').length === 1);
+  assert.ok(hub.ofType('sandbox_result').length === 1);
+  const audit = hub.ofType('audit_event').at(-1)!.payload;
+  assert.equal(audit.status, 'success');
+  assert.equal(audit.approval_required, false);
+});
+
+test('MEDIUM tool without permission_granted never executes (times out, honest result)', async () => {
+  const { hub, driver } = await setup({ timeoutMs: 60 });
+  green(hub, 'silent');
+  const { request_id, done } = toolRequest(hub, 'docker_sandbox');
+  await done;
+  const r = lastFinished(hub, request_id);
   assert.equal(r.status, 'rejected');
   assert.equal(driver.sandbox, 'absent');
-  assert.ok(!types(bus).includes('tool_started'));
-  const audit = bus.log.filter((e) => e.type === 'audit_event').at(-1)!.payload as { approval_status: string };
-  assert.equal(audit.approval_status, 'timeout');
+  assert.equal(hub.ofType('tool_started').length, 0);
+  assert.match(r.error ?? '', /No authorization/);
+  assert.equal(hub.ofType('audit_event').at(-1)!.payload.approval_status, 'PENDING');
 });
 
-test('MEDIUM tool executes only after GREEN grants with matching request_id', async () => {
-  const { bus, driver } = await setup();
-  const { request_id, finished } = request(bus, 'sandbox_create');
-  await tick();
-  assert.equal(driver.sandbox, 'absent', 'must not have started before grant');
-  const d: PermissionDecision = { request_id, granted: true, decided_by: 'human', user_authorization: 'yes' };
-  await bus.publish(makeEvent(SESSION, 'permission_granted', 'security', 'operator', d));
-  const r = await finished;
+test('MEDIUM tool executes only after GREEN grants; permission_id travels with tool_started and the audit', async () => {
+  const { hub, driver } = await setup();
+  green(hub, 'grant');
+  const { request_id, done } = toolRequest(hub, 'docker_sandbox');
+  await done;
+  const r = lastFinished(hub, request_id);
   assert.equal(r.status, 'success');
   assert.equal(driver.sandbox, 'running');
-  assert.ok(types(bus).includes('sandbox_started'));
-  const audit = bus.log.filter((e) => e.type === 'audit_event').at(-1)!.payload as { approval_status: string; user_authorization: string };
-  assert.equal(audit.approval_status, 'granted');
+  const perm = hub.ofType('permission_requested')[0].payload;
+  assert.equal(hub.ofType('tool_started')[0].payload.permission_id, perm.permission_id);
+  assert.equal(r.permission_id, perm.permission_id);
+  assert.equal(hub.ofType('sandbox_started').length, 1);
+  const audit = hub.ofType('audit_event').at(-1)!.payload;
+  assert.equal(audit.approval_status, 'GRANTED');
   assert.equal(audit.user_authorization, 'yes');
+  assert.ok(hub.states().includes('WAITING_FOR_PERMISSION'));
 });
 
 test('permission_denied → status denied, nothing runs', async () => {
-  const { bus, driver } = await setup();
-  const { request_id, finished } = request(bus, 'sandbox_create');
-  await tick();
-  await bus.publish(makeEvent(SESSION, 'permission_denied', 'security', 'operator', { request_id, granted: false, decided_by: 'human', user_authorization: 'no' }));
-  const r = await finished;
-  assert.equal(r.status, 'denied');
+  const { hub, driver } = await setup();
+  green(hub, 'deny');
+  const { request_id, done } = toolRequest(hub, 'docker_sandbox');
+  await done;
+  assert.equal(lastFinished(hub, request_id).status, 'denied');
   assert.equal(driver.sandbox, 'absent');
+  assert.equal(hub.ofType('tool_started').length, 0);
+  assert.equal(hub.ofType('audit_event').at(-1)!.payload.status, 'denied');
 });
 
-test('a grant from anyone other than security is ignored', async () => {
-  const { bus, driver } = await setup({ timeoutMs: 150 });
-  const { request_id, finished } = request(bus, 'sandbox_create');
-  await tick();
-  // architect tries to self-authorize
-  await bus.publish(makeEvent(SESSION, 'permission_granted', 'architect', 'operator', { request_id, granted: true, decided_by: 'policy' }));
-  const r = await finished;
+test('GREEN offline → approval-requiring tool is not executed and CYAN is told', async () => {
+  const { hub, driver } = await setup();
+  hub.online.delete('security');
+  const { request_id, done } = toolRequest(hub, 'docker_sandbox');
+  await done;
+  const r = lastFinished(hub, request_id);
   assert.equal(r.status, 'rejected');
+  assert.match(r.error ?? '', /Security agent is offline/);
   assert.equal(driver.sandbox, 'absent');
-  assert.ok(types(bus).includes('warning'));
-});
-
-test('a grant with a different request_id does not unlock a pending request', async () => {
-  const { bus, driver } = await setup({ timeoutMs: 150 });
-  const { finished } = request(bus, 'sandbox_create');
-  await tick();
-  await bus.publish(makeEvent(SESSION, 'permission_granted', 'security', 'operator', { request_id: 'someone-elses', granted: true, decided_by: 'human' }));
-  const r = await finished;
-  assert.equal(r.status, 'rejected');
-  assert.equal(driver.sandbox, 'absent');
-});
-
-test('Docker offline: agent_started reports it, warning emitted, tools return unavailable, face OFFLINE', async () => {
-  const bus = new InMemoryBus();
-  const driver = new FakeDriver(); driver.dockerUp = false;
-  const faces: string[] = [];
-  const agent = new OperatorAgent({ session_id: SESSION, bus, registry: ToolRegistry.load(), driver, speaker: new SilentSpeaker(), onFaceState: (s) => faces.push(s) });
-  await agent.start(); await tick();
-  const started = bus.log.find((e) => e.type === 'agent_started')!.payload as { sandbox: { docker_available: boolean } };
-  assert.equal(started.sandbox.docker_available, false);
-  assert.ok(types(bus).includes('warning'));
-  assert.ok(faces.includes('OFFLINE'));
-  const r = await request(bus, 'sandbox_ping', { target: '127.0.0.1' }).finished;
-  assert.equal(r.status, 'unavailable');
-  assert.match(r.summary, /Docker capability is unavailable/);
-});
-
-test('validation_request produces validation_result with validated=false when the test fails', async () => {
-  const { bus, driver } = await setup();
-  driver.sandbox = 'running'; driver.networks = ['wasp-lab'];
-  driver.responses.curl = { exit_code: 7, stdout: '000 0.000', stderr: 'curl: (7) Failed to connect', timed_out: false };
-  const { request_id, finished } = request(bus, 'sandbox_http', { url: 'http://wasp-target/' }, 'validation_request');
-  await finished;
-  const vr = bus.log.find((e) => e.type === 'validation_result')!;
-  assert.equal(vr.to, 'architect');
-  const p = vr.payload as { request_id: string; validated: boolean; status: string };
-  assert.equal(p.request_id, request_id);
-  assert.equal(p.validated, false);
-  assert.equal(p.status, 'failure');
+  assert.ok(hub.said().some((m) => /Security is offline/.test(m)));
 });
 
 test('unknown tool and off-list args are rejected with no execution', async () => {
-  const { bus, driver } = await setup();
+  const { hub, driver } = await setup();
+  green(hub, 'grant');
   driver.sandbox = 'running';
-  const a = await request(bus, 'host_shell', { cmd: 'whoami' }).finished;
-  assert.equal(a.status, 'rejected');
-  const b = await request(bus, 'sandbox_ping', { target: '8.8.8.8' }).finished;
-  assert.equal(b.status, 'rejected');
+  const a = toolRequest(hub, 'host_shell', { cmd: 'whoami' });
+  await a.done;
+  assert.equal(lastFinished(hub, a.request_id).status, 'rejected');
+  const b = toolRequest(hub, 'sandbox_ping', { target: '8.8.8.8' });
+  await b.done;
+  assert.equal(lastFinished(hub, b.request_id).status, 'rejected');
   assert.equal(driver.execLog.length, 0);
 });
 
 test('requests addressed to other agents are ignored', async () => {
-  const { bus, driver } = await setup();
+  const { hub, driver } = await setup();
   driver.sandbox = 'running';
-  await bus.publish(makeEvent(SESSION, 'tool_requested', 'architect', 'researcher', { request_id: 'x', tool: 'sandbox_ping', args: { target: '127.0.0.1' }, reason: '', requested_by: 'architect' }));
-  await tick(); await tick();
+  await hub.deliver('tool_requested', { tool_id: 'sandbox_ping', request_id: 'x', requested_by: 'architect', input: { target: '127.0.0.1' } }, 'architect', 'researcher');
+  await hub.settle();
   assert.equal(driver.execLog.length, 0);
-  assert.ok(!types(bus).includes('tool_started'));
+  assert.equal(hub.ofType('tool_started').length, 0);
+});
+
+test('validation_request: full default plan, validated=true only when every real test passed', async () => {
+  const { hub, driver } = await setup();
+  green(hub, 'grant');
+  await hub.deliver('validation_request', { request_id: 'v1', description: 'ping + dns inside an isolated container', research_ids: ['res1'] }, 'architect', 'operator', 'v1');
+  const vr = hub.ofType('validation_result')[0].payload as ValidationResult;
+  assert.equal(vr.validated, true);
+  assert.deepEqual(vr.tests.map((t) => t.tool_id), ['docker_sandbox', 'sandbox_ping', 'sandbox_dns', 'sandbox_http', 'sandbox_routes']);
+  assert.ok(vr.tests.every((t) => t.status === 'success'));
+  assert.deepEqual(vr.verifies_research_ids, ['res1']);
+  assert.equal(driver.sandbox, 'running');
+  // exactly one human-approval round trip (docker_sandbox); the LOW tests were only announced
+  assert.equal(hub.ofType('permission_requested').length, 5);
+  assert.ok(hub.states().at(-1) === 'SUCCESS');
+});
+
+test('validation_request: a failing test stops the plan and validated=false with the reason', async () => {
+  const { hub, driver } = await setup();
+  green(hub, 'grant');
+  driver.responses.ping = { exit_code: 1, stdout: '4 packets transmitted, 0 received, 100% packet loss', stderr: '', timed_out: false };
+  await hub.deliver('validation_request', { request_id: 'v2', description: 'x' }, 'architect', 'operator');
+  const vr = hub.ofType('validation_result')[0].payload as ValidationResult;
+  assert.equal(vr.validated, false);
+  assert.deepEqual(vr.tests.map((t) => t.tool_id), ['docker_sandbox', 'sandbox_ping']);
+  assert.match(vr.summary, /sandbox_ping → failure/);
+  assert.equal(vr.verifies_research_ids, undefined);
+});
+
+test('validation_request: denied sandbox → validated=false, no tests executed', async () => {
+  const { hub, driver } = await setup();
+  green(hub, 'deny');
+  await hub.deliver('validation_request', { request_id: 'v3', description: 'x' }, 'architect', 'operator');
+  const vr = hub.ofType('validation_result')[0].payload as ValidationResult;
+  assert.equal(vr.validated, false);
+  assert.equal(vr.tests[0].status, 'denied');
+  assert.equal(driver.execLog.length, 0);
+});
+
+test('stub mode (fake Docker): everything is marked stub and the lab is never validated', async () => {
+  const { hub } = await setup({ stub: true });
+  green(hub, 'grant');
+  await hub.deliver('validation_request', { request_id: 'v4', description: 'x', tools: ['docker_sandbox', 'sandbox_ping'] }, 'architect', 'operator');
+  const vr = hub.ofType('validation_result')[0].payload as ValidationResult;
+  assert.equal(vr.validated, false);
+  assert.equal(vr.stub, true);
+  assert.ok(vr.tests.every((t) => t.stub === true));
+  assert.match(vr.summary, /\[stub\]/);
+  assert.ok(hub.ofType('audit_event').every((e) => e.payload.stub === true));
 });

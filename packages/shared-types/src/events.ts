@@ -39,6 +39,8 @@ export interface EventPayloads {
   final_response: { text: string; workshop?: WorkshopSpec };
 
   // --- agent ↔ agent (the visible/audible conversation) ---
+  // A UI window connects as its agent with meta.role = 'ui'. Such sockets do not count
+  // for presence and must only emit tts_* events; human input goes through POST /events.
   agent_message: {
     message: string;
     /** Intent label shown in UI, e.g. "research_request". */
@@ -58,7 +60,7 @@ export interface EventPayloads {
   validation_result: ValidationResult;
   tools_registered: { tools: ToolDefinition[] };
   tool_requested: ToolRequest;
-  tool_started: { tool_id: string; request_id: string };
+  tool_started: { tool_id: string; request_id: string; permission_id?: string };
   tool_finished: ToolResult;
   sandbox_started: SandboxState;
   sandbox_test: { request_id: string; command: string };

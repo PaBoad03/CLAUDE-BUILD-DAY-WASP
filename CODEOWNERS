@@ -17,11 +17,17 @@
 /apps/researcher/         # Andrea
 /packages/voice/          # Andrea
 /packages/ui/             # Andrea (shared face component, parameterized by color)
+/docs/RESEARCH.md         # Andrea
+/docs/CORRECCIONES.md     # Andrea
 
 # --- Felipe / ORANGE: docker, sandbox, tools ---
 /apps/operator/           # Felipe
+/packages/tools/          # Felipe (tool registry + allowlisted executor)
 /docker/                  # Felipe
+/schemas/tools.json       # Felipe (the tool registry data; GREEN reads it, never lowers its risk)
 
 # --- Juanda / GREEN: permissions, audit, adversarial tests ---
 /apps/security/           # Juanda
 /packages/permissions/    # Juanda
+/packages/audit/          # Juanda
+/docs/GREEN.md            # Juanda

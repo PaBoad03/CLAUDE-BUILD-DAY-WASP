@@ -16,7 +16,8 @@ export type PermissionStatus =
   | 'GRANTED'
   | 'DENIED'
   | 'CANCELLED' // human said STOP / CANCEL
-  | 'EXPIRED';
+  | 'EXPIRED' // nobody answered in time
+  | 'BLOCKED'; // policy forbids it regardless of human input (CRITICAL: host shell, destructive...)
 
 /** Sent by any agent that wants to do something risky. */
 export interface PermissionRequest {
@@ -65,6 +66,8 @@ export interface PermissionDecision {
   approval_required: boolean;
   decided_by: 'security' | 'human';
   human_raw?: string;
+  /** Why GREEN decided this way (policy matched, escalation, timeout, blocked...). */
+  rationale?: string;
   decided_at: string;
 }
 
@@ -76,6 +79,7 @@ export interface PermissionRecord extends PermissionRequest {
   human_prompt?: string;
   decided_by?: 'security' | 'human';
   human_raw?: string;
+  rationale?: string;
   requested_at: string;
   decided_at?: string;
 }

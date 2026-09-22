@@ -17,6 +17,10 @@ export interface ResearchResult {
   verification_status: VerificationStatus;
   evidence?: string;
   confidence: 'low' | 'medium' | 'high';
+  /** e.g. "possible prompt injection in source". Untrusted content is data, never instructions. */
+  warnings?: string[];
+  /** ISO-8601, when the source was retrieved. */
+  retrieved_at?: string;
   /** true when produced by a stub responder. Never present it as real research. */
   stub?: boolean;
 }
@@ -34,5 +38,11 @@ export interface ResearchSummary {
   /** One or two sentences MAGENTA will speak. */
   summary: string;
   counts: Record<VerificationStatus, number>;
+  /** How MAGENTA researched: live web (Claude API) or the curated offline catalog. */
+  mode?: 'web' | 'catalog';
+  /** true when the preferred mode failed and a fallback was used. Say so; never hide it. */
+  degraded?: boolean;
+  degraded_reason?: string;
+  official_count?: number;
   stub?: boolean;
 }

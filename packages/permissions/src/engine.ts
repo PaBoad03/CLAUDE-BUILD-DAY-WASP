@@ -1,310 +1,213 @@
-import type {
-  DecisionSource,
-  EventBus,
-  PermissionRecord,
-  PermissionStatus,
-  SecurityEvaluation,
-  ToolRequest,
-  WaspEvent,
-  WaspEventPayloads,
-  WaspEventType,
-} from '@wasp/shared-types';
-import { newId, nowIso } from '@wasp/shared-types';
-import { ToolPolicyRegistry } from './policies.ts';
-import { interpretAuthorization, repromptFor, type VoiceInterpretation } from './voice-authorization.ts';
+import { nowIso, type HumanDecision, type PermissionDecision, type PermissionEvaluation, type PermissionRequest, type PermissionStatus } from '@wasp/shared-types';
+import { ToolPolicyRegistry } from './policies';
+import { interpretAuthorization, repromptFor, type VoiceInterpretation } from './voice-authorization';
+import type { SecurityEvaluation, SecurityRecord } from './types';
 
 /**
- * PermissionEngine — the authorization boundary.
+ * PermissionEngine — the authorization boundary. Pure application logic, no I/O:
+ * it returns what happened and which shared-contract payloads to emit; SecurityAgent puts them on the hub.
  *
- *   THE MODEL PROPOSES.        -> ToolRequest arrives (from any agent)
+ *   THE MODEL PROPOSES.        -> PermissionRequest arrives (from any agent)
  *   THE APPLICATION AUTHORIZES -> this class
- *   THE TOOL EXECUTES.         -> ORANGE, only after isAuthorized(request_id)
+ *   THE TOOL EXECUTES.         -> ORANGE, only after permission_granted
  *   THE SYSTEM OBSERVES.       -> tool_started / tool_finished events
- *   THE AUDIT RECORDS.         -> @wasp/audit listens to everything above
+ *   THE AUDIT RECORDS.         -> audit_event (hub persists) + @wasp/audit
  *
- * Invariants enforced here (tested in test/engine.test.ts):
- *  - Only a human decision (source voice|ui) can move PENDING -> GRANTED.
+ * Invariants (tested in test/engine.test.ts):
+ *  - Only a human decision (YES via voice/ui/cli) can move AWAITING_HUMAN -> GRANTED.
  *  - BLOCKED can never become GRANTED.
- *  - A decision on a non-PENDING permission is rejected.
+ *  - A decision on a non-pending permission is rejected.
  *  - Ambiguous speech never grants.
- *  - isAuthorized() is the only truth ORANGE should consult before executing.
+ *  - LOW risk is AUTO_APPROVED by policy and still recorded.
  */
 
 export interface PermissionEngineOptions {
-  bus: EventBus;
   registry?: ToolPolicyRegistry;
-  /** ms before a PENDING permission expires. 0 = never. Default 0 (demo: humans are slow). */
-  pending_timeout_ms?: number;
   lang?: 'es' | 'en';
   now?: () => string;
 }
 
+export type RequestOutcome = 'BLOCKED' | 'AWAITING_HUMAN' | 'AUTO_APPROVED' | 'DUPLICATE';
+
+export interface RequestResult {
+  outcome: RequestOutcome;
+  record: SecurityRecord;
+  /** BLOCKED (as permission_denied) or AUTO_APPROVED (as permission_granted). */
+  decision?: PermissionDecision;
+  /** AWAITING_HUMAN: what CYAN must ask the human (permission_required). */
+  required?: PermissionEvaluation;
+}
+
 export interface DecisionResult {
   ok: boolean;
-  permission: PermissionRecord;
+  record: SecurityRecord | undefined;
+  decision?: PermissionDecision;
   interpretation?: VoiceInterpretation;
+  /** Set when the answer was ambiguous: what to say to re-ask (permission_clarification_needed). */
+  clarification?: { permission_id: string; human_prompt: string };
   error?: string;
 }
 
+const GRANTING: PermissionStatus[] = ['GRANTED', 'AUTO_APPROVED'];
+
 export class PermissionEngine {
   readonly registry: ToolPolicyRegistry;
-  private readonly bus: EventBus;
   private readonly lang: 'es' | 'en';
   private readonly now: () => string;
-  private readonly timeoutMs: number;
-  private readonly permissions = new Map<string, PermissionRecord>();
-  private readonly byRequest = new Map<string, string>();
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly records = new Map<string, SecurityRecord>();
 
-  constructor(opts: PermissionEngineOptions) {
-    this.bus = opts.bus;
+  constructor(opts: PermissionEngineOptions = {}) {
     this.registry = opts.registry ?? new ToolPolicyRegistry();
     this.lang = opts.lang ?? 'es';
     this.now = opts.now ?? nowIso;
-    this.timeoutMs = opts.pending_timeout_ms ?? 0;
   }
 
   // ---------- read side ----------
 
-  evaluate(request: ToolRequest): SecurityEvaluation {
+  evaluate(request: PermissionRequest): SecurityEvaluation {
     return this.registry.evaluate(request);
   }
 
-  get(permission_id: string): PermissionRecord | undefined {
-    return this.permissions.get(permission_id);
+  get(permission_id: string): SecurityRecord | undefined {
+    const r = this.records.get(permission_id);
+    return r ? snapshot(r) : undefined;
   }
 
-  getByRequest(request_id: string): PermissionRecord | undefined {
-    const pid = this.byRequest.get(request_id);
-    return pid ? this.permissions.get(pid) : undefined;
+  list(): SecurityRecord[] {
+    return [...this.records.values()].map(snapshot);
   }
 
-  list(session_id?: string): PermissionRecord[] {
-    const all = [...this.permissions.values()];
-    return session_id ? all.filter((p) => p.session_id === session_id) : all;
+  pending(): SecurityRecord[] {
+    return this.list().filter((p) => p.status === 'AWAITING_HUMAN');
   }
 
-  pending(session_id?: string): PermissionRecord[] {
-    return this.list(session_id).filter((p) => p.status === 'PENDING');
-  }
-
-  /** The gate. ORANGE must call this right before executing. */
-  isAuthorized(request_id: string): boolean {
-    const p = this.getByRequest(request_id);
-    return p !== undefined && p.status === 'GRANTED';
+  /** The gate. A tool may run only if its permission is GRANTED (human) or AUTO_APPROVED (LOW policy). */
+  isAuthorized(permission_id: string): boolean {
+    const p = this.records.get(permission_id);
+    return p !== undefined && GRANTING.includes(p.status);
   }
 
   // ---------- write side ----------
 
-  /**
-   * Register a tool request. Evaluates risk, creates the PermissionRecord and
-   * emits security_evaluated + (permission_requested | permission_granted | tool_blocked).
-   *
-   * Idempotent per request_id.
-   */
-  request(req: ToolRequest): PermissionRecord {
-    const existing = this.getByRequest(req.request_id);
-    if (existing) return existing;
+  /** Register a request. Evaluates risk and decides whether a human is needed. Idempotent per permission_id. */
+  request(req: PermissionRequest): RequestResult {
+    const existing = this.records.get(req.permission_id);
+    if (existing) return { outcome: 'DUPLICATE', record: snapshot(existing) };
 
     const evaluation = this.evaluate(req);
     const ts = this.now();
+    const status: PermissionStatus = !evaluation.allowed ? 'BLOCKED' : evaluation.approval_required ? 'AWAITING_HUMAN' : 'AUTO_APPROVED';
+    const human_prompt = this.promptFor(req, evaluation);
 
-    let status: PermissionStatus;
-    if (!evaluation.allowed) status = 'BLOCKED';
-    else if (evaluation.approval_required) status = 'PENDING';
-    else status = 'GRANTED';
-
-    const record: PermissionRecord = {
-      permission_id: newId('perm'),
-      request_id: req.request_id,
-      session_id: req.session_id,
-      agent: req.agent,
-      tool: req.tool,
-      operation: req.operation,
-      input: req.input,
-      reason: req.reason,
-      risk_level: evaluation.risk_level,
-      approval_required: evaluation.approval_required,
+    const record: SecurityRecord = {
+      ...req,
       status,
+      risk: evaluation.risk_level,
+      approval_required: evaluation.approval_required,
+      human_prompt,
+      rationale: evaluation.rationale,
       requested_at: ts,
-      prompt_for_human: this.promptFor(req, evaluation),
-    };
-
-    if (status === 'GRANTED') {
-      record.decided_at = ts;
-      record.decided_by = 'policy';
-      record.decision_source = 'policy';
-    } else if (status === 'BLOCKED') {
-      record.decided_at = ts;
-      record.decided_by = 'policy';
-      record.decision_source = 'policy';
-    }
-
-    this.permissions.set(record.permission_id, record);
-    this.byRequest.set(req.request_id, record.permission_id);
-
-    this.emit('security_evaluated', req.session_id, {
-      request_id: req.request_id,
-      permission_id: record.permission_id,
       evaluation,
-    });
+    };
+    if (status !== 'AWAITING_HUMAN') {
+      record.decided_at = ts;
+      record.decided_by = 'security';
+    }
+    this.records.set(req.permission_id, record);
 
     if (status === 'BLOCKED') {
-      this.emit('tool_blocked', req.session_id, {
-        request: req,
-        risk_level: evaluation.risk_level,
-        reason: evaluation.blocked_reason ?? evaluation.rationale,
-      });
-    } else if (status === 'PENDING') {
-      this.emit('permission_requested', req.session_id, { permission: snapshot(record) });
-      this.armTimeout(record);
-    } else {
-      this.emit('permission_granted', req.session_id, { permission: snapshot(record) });
+      return { outcome: 'BLOCKED', record: snapshot(record), decision: this.toDecision(record, evaluation.blocked_reason ?? evaluation.rationale) };
     }
-
-    return snapshot(record);
+    if (status === 'AUTO_APPROVED') {
+      return { outcome: 'AUTO_APPROVED', record: snapshot(record), decision: this.toDecision(record, evaluation.rationale) };
+    }
+    return {
+      outcome: 'AWAITING_HUMAN',
+      record: snapshot(record),
+      required: { permission_id: req.permission_id, operation: req.operation, risk: evaluation.risk_level, approval_required: true, human_prompt, rationale: evaluation.rationale },
+    };
   }
 
   /**
-   * Apply a HUMAN decision. `source` must be 'voice' or 'ui'.
-   * Agents / policy / model must never call this with a forged source; the
-   * hub should only route human channels here.
+   * Apply a HUMAN decision (already interpreted as YES / NO / STOP).
+   * Only AWAITING_HUMAN permissions can be decided; BLOCKED never changes.
    */
-  decide(
-    permission_id: string,
-    decision: 'GRANTED' | 'DENIED' | 'CANCELLED',
-    source: Extract<DecisionSource, 'voice' | 'ui'>,
-    transcript: string,
-  ): DecisionResult {
-    const record = this.permissions.get(permission_id);
-    if (!record) {
-      return { ok: false, permission: missing(permission_id), error: 'unknown permission_id' };
-    }
-    if (record.status !== 'PENDING') {
-      return { ok: false, permission: snapshot(record), error: `permission is ${record.status}, not PENDING` };
-    }
-    if (source !== 'voice' && source !== 'ui') {
-      return { ok: false, permission: snapshot(record), error: 'only human sources (voice|ui) may decide' };
-    }
+  decide(permission_id: string, decision: Exclude<HumanDecision, 'AMBIGUOUS'>, raw: string, channel: string): DecisionResult {
+    const record = this.records.get(permission_id);
+    if (!record) return { ok: false, record: undefined, error: 'unknown permission_id' };
+    if (record.status !== 'AWAITING_HUMAN') return { ok: false, record: snapshot(record), error: `permission is ${record.status}, not AWAITING_HUMAN` };
 
-    this.disarmTimeout(permission_id);
-    record.status = decision;
+    record.status = decision === 'YES' ? 'GRANTED' : decision === 'NO' ? 'DENIED' : 'CANCELLED';
     record.decided_at = this.now();
     record.decided_by = 'human';
-    record.decision_source = source;
-    record.decision_transcript = transcript;
-
-    const type: WaspEventType =
-      decision === 'GRANTED' ? 'permission_granted' : decision === 'DENIED' ? 'permission_denied' : 'permission_cancelled';
-    this.emit(type, record.session_id, { permission: snapshot(record) });
-    return { ok: true, permission: snapshot(record) };
+    record.human_raw = raw;
+    record.rationale = `${record.evaluation.rationale}; human said "${raw}" via ${channel}`;
+    return { ok: true, record: snapshot(record), decision: this.toDecision(record, record.rationale) };
   }
 
   /**
-   * Interpret a transcript and, if unambiguous, decide. If ambiguous, emits
-   * permission_clarification_needed and leaves the permission PENDING.
+   * Interpret a transcript and, if unambiguous, decide. If ambiguous, returns a clarification prompt
+   * and leaves the permission AWAITING_HUMAN. `explicit` (a UI button) is trusted only when the raw
+   * text itself is ambiguous and the channel is 'ui'.
    */
-  decideFromTranscript(permission_id: string, transcript: string, source: 'voice' | 'ui' = 'voice'): DecisionResult {
-    const record = this.permissions.get(permission_id);
-    if (!record) {
-      return { ok: false, permission: missing(permission_id), error: 'unknown permission_id' };
-    }
-    const interpretation = interpretAuthorization(transcript);
+  decideFromTranscript(permission_id: string, raw: string, channel: string, explicit?: HumanDecision): DecisionResult {
+    const record = this.records.get(permission_id);
+    if (!record) return { ok: false, record: undefined, error: 'unknown permission_id' };
+    const interpretation = interpretAuthorization(raw);
+    let final: HumanDecision = interpretation.decision;
+    if (final === 'AMBIGUOUS' && channel === 'ui' && explicit && explicit !== 'AMBIGUOUS') final = explicit;
 
-    if (interpretation.decision === 'AMBIGUOUS') {
-      if (record.status === 'PENDING') {
-        this.emit('permission_clarification_needed', record.session_id, {
-          permission: snapshot(record),
-          heard: transcript,
-          decision: 'AMBIGUOUS',
-          reprompt: repromptFor(record.operation, this.lang),
-        });
-      }
-      return { ok: false, permission: snapshot(record), interpretation, error: 'ambiguous authorization' };
+    if (final === 'AMBIGUOUS') {
+      const clarification = record.status === 'AWAITING_HUMAN' ? { permission_id, human_prompt: repromptFor(record.operation, this.lang) } : undefined;
+      return { ok: false, record: snapshot(record), interpretation, clarification, error: 'ambiguous authorization' };
     }
-
-    const map = { AUTHORIZED: 'GRANTED', DENIED: 'DENIED', CANCELLED: 'CANCELLED' } as const;
-    const result = this.decide(permission_id, map[interpretation.decision], source, transcript);
-    return { ...result, interpretation };
+    return { ...this.decide(permission_id, final, raw, channel), interpretation };
   }
 
-  /** Human said "stop" with no specific permission: cancel everything pending in the session. */
-  cancelAllPending(session_id: string, transcript: string, source: 'voice' | 'ui' = 'voice'): PermissionRecord[] {
-    return this.pending(session_id).map((p) => this.decide(p.permission_id, 'CANCELLED', source, transcript).permission);
+  /** Human said "stop" with no specific permission: cancel everything pending. */
+  cancelAllPending(raw: string, channel: string): PermissionDecision[] {
+    return this.pending()
+      .map((p) => this.decide(p.permission_id, 'STOP', raw, channel).decision)
+      .filter((d): d is PermissionDecision => d !== undefined);
   }
 
+  /** Nobody answered in time. */
   expire(permission_id: string): DecisionResult {
-    const record = this.permissions.get(permission_id);
-    if (!record) return { ok: false, permission: missing(permission_id), error: 'unknown permission_id' };
-    if (record.status !== 'PENDING') return { ok: false, permission: snapshot(record), error: `permission is ${record.status}` };
-    this.disarmTimeout(permission_id);
+    const record = this.records.get(permission_id);
+    if (!record) return { ok: false, record: undefined, error: 'unknown permission_id' };
+    if (record.status !== 'AWAITING_HUMAN') return { ok: false, record: snapshot(record), error: `permission is ${record.status}` };
     record.status = 'EXPIRED';
     record.decided_at = this.now();
-    record.decided_by = 'system';
-    record.decision_source = 'timeout';
-    this.emit('permission_expired', record.session_id, { permission: snapshot(record) });
-    return { ok: true, permission: snapshot(record) };
-  }
-
-  dispose(): void {
-    for (const t of this.timers.values()) clearTimeout(t);
-    this.timers.clear();
+    record.decided_by = 'security';
+    record.rationale = 'timeout: no human answer';
+    return { ok: true, record: snapshot(record), decision: this.toDecision(record, record.rationale) };
   }
 
   // ---------- internals ----------
 
-  private promptFor(req: ToolRequest, ev: SecurityEvaluation): string {
-    const who = req.agent.toUpperCase();
-    return this.lang === 'es'
-      ? `${who} solicita "${req.operation}" con la herramienta ${req.tool}. Riesgo ${ev.risk_level}. Motivo: ${req.reason}. ¿Autorizas? Responde sí, no o stop.`
-      : `${who} requests "${req.operation}" using ${req.tool}. Risk ${ev.risk_level}. Reason: ${req.reason}. Do you authorize? Say yes, no or stop.`;
-  }
-
-  private armTimeout(record: PermissionRecord): void {
-    if (this.timeoutMs <= 0) return;
-    const t = setTimeout(() => this.expire(record.permission_id), this.timeoutMs);
-    // don't keep the process alive just for this
-    (t as { unref?: () => void }).unref?.();
-    this.timers.set(record.permission_id, t);
-  }
-
-  private disarmTimeout(permission_id: string): void {
-    const t = this.timers.get(permission_id);
-    if (t) clearTimeout(t);
-    this.timers.delete(permission_id);
-  }
-
-  private emit<T extends keyof WaspEventPayloads>(type: T, session_id: string, payload: WaspEventPayloads[T]): void {
-    const event: WaspEvent<T, WaspEventPayloads[T]> = {
-      event_id: newId('evt'),
-      type,
-      session_id,
-      source: 'security',
-      timestamp: this.now(),
-      payload,
+  private toDecision(r: SecurityRecord, rationale: string): PermissionDecision {
+    return {
+      permission_id: r.permission_id,
+      operation: r.operation,
+      requested_by: r.requested_by,
+      status: r.status,
+      risk: r.risk ?? r.evaluation.risk_level,
+      approval_required: r.approval_required ?? true,
+      decided_by: r.decided_by ?? 'security',
+      human_raw: r.human_raw,
+      rationale,
+      decided_at: r.decided_at ?? this.now(),
     };
-    void this.bus.publish(event as WaspEvent);
+  }
+
+  private promptFor(req: PermissionRequest, ev: SecurityEvaluation): string {
+    const who = req.requested_by.toUpperCase();
+    return this.lang === 'es'
+      ? `${who} solicita "${req.operation}". Riesgo ${ev.risk_level}. Motivo: ${req.reason}. ¿Autorizas? Responde sí, no o stop.`
+      : `${who} requests "${req.operation}". Risk ${ev.risk_level}. Reason: ${req.reason}. Do you authorize? Say yes, no or stop.`;
   }
 }
 
-function snapshot(p: PermissionRecord): PermissionRecord {
-  return { ...p, input: { ...p.input } };
-}
-
-function missing(permission_id: string): PermissionRecord {
-  return {
-    permission_id,
-    request_id: '',
-    session_id: '',
-    agent: 'security',
-    tool: '',
-    operation: '',
-    input: {},
-    reason: '',
-    risk_level: 'CRITICAL',
-    approval_required: true,
-    status: 'BLOCKED',
-    requested_at: '',
-    prompt_for_human: '',
-  };
+function snapshot(p: SecurityRecord): SecurityRecord {
+  return { ...p, input: p.input ? { ...p.input } : undefined, evaluation: { ...p.evaluation } };
 }

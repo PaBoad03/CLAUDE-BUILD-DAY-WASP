@@ -67,6 +67,8 @@ export function reduce(prev: SharedContext, evt: AnyEvent): ReduceResult {
     case 'agent_registered':
     case 'agent_started': {
       const p = evt.payload;
+      // UI windows connect as their agent with meta.role = 'ui'. They are viewers, not presence.
+      if ((p.meta as { role?: unknown } | undefined)?.role === 'ui') break;
       ctx.agents = {
         ...prev.agents,
         [p.agent]: { agent: p.agent, mode: p.mode, meta: p.meta, status: 'online', connected_at: evt.timestamp },
@@ -139,8 +141,17 @@ export function reduce(prev: SharedContext, evt: AnyEvent): ReduceResult {
       const v = evt.payload;
       // validated can ONLY become true through a real (non-stub) validation_result.
       const realValidated = v.validated && !v.stub && v.tests.some((t) => t.status === 'success' && !t.stub);
+      // FOUND → VERIFIED only through a real, successful validation that names the research it confirms.
+      let research = prev.research;
+      if (realValidated && v.verifies_research_ids?.length) {
+        const ids = new Set(v.verifies_research_ids);
+        research = prev.research.map((r) => (ids.has(r.id) ? { ...r, verification_status: 'VERIFIED' as const } : r));
+        ctx.research = research;
+        touch('research');
+      }
       ctx.workshop = {
         ...prev.workshop,
+        research,
         lab: {
           ...prev.workshop.lab,
           validated: realValidated,

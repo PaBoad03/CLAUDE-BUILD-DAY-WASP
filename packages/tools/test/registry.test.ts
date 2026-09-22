@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ToolRegistry } from '../src/registry.js';
+import { ToolRegistry } from '../src/registry';
 
 const reg = ToolRegistry.load();
 
@@ -10,7 +10,7 @@ test('registry loads schemas/tools.json with every tool having a valid risk', ()
 });
 
 test('risky tools are flagged requires_approval', () => {
-  assert.equal(reg.get('sandbox_create')!.requires_approval, true);
+  assert.equal(reg.get('docker_sandbox')!.requires_approval, true);
   assert.equal(reg.get('sandbox_network_external')!.requires_approval, true);
   assert.equal(reg.get('sandbox_network_external')!.risk, 'HIGH');
   assert.equal(reg.get('sandbox_ping')!.requires_approval, false);
@@ -47,4 +47,17 @@ test('integer bounds enforced', () => {
 
 test('unknown tool is rejected', () => {
   assert.equal(reg.validate('host_shell', { cmd: 'whoami' }).ok, false);
+});
+
+test('exports the shared-contract ToolDefinition[] with a JSON schema per tool', () => {
+  const defs = reg.toToolDefinitions({ available: false, unavailable_reason: 'no docker' });
+  const ping = defs.find((d) => d.id === 'sandbox_ping')!;
+  assert.equal(ping.owner, 'operator');
+  assert.equal(ping.risk, 'LOW');
+  assert.equal(ping.available, false);
+  assert.equal(ping.unavailable_reason, 'no docker');
+  const schema = ping.input_schema as { properties: Record<string, { enum?: unknown[] }>; required: string[]; additionalProperties: boolean };
+  assert.deepEqual(schema.required, ['target']);
+  assert.deepEqual(schema.properties.target.enum, ['127.0.0.1', 'localhost', 'wasp-target']);
+  assert.equal(schema.additionalProperties, false);
 });

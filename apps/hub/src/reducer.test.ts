@@ -48,6 +48,26 @@ test('real successful validation sets validated = true', () => {
   assert.equal(ctx.workshop.lab.validated, true);
 });
 
+test('a UI socket registration does not change presence', () => {
+  let ctx = initialContext('s', nowIso());
+  ctx = reduce(ctx, ev('agent_registered', 'operator', { agent: 'operator', mode: 'real', meta: { role: 'ui' } })).context;
+  assert.equal(ctx.agents.operator.status, 'offline');
+  assert.equal(ctx.agent_states.operator, 'OFFLINE');
+});
+
+test('real validation marks the research it names VERIFIED; a stub cannot', () => {
+  let ctx = initialContext('s', nowIso());
+  const res = { id: 'res1', source: 'https://x', title: 't', claim: 'ping works', verification_status: 'FOUND' as const, confidence: 'medium' as const };
+  ctx = reduce(ctx, ev('research_result', 'researcher', { request_id: 'q', results: [res], summary: 's', counts: { FOUND: 1, VERIFIED: 0, CONTRADICTED: 0, UNKNOWN: 0 } })).context;
+  const okTest = { tool_id: 'sandbox_ping', request_id: 'r1', status: 'success' as const, started_at: nowIso(), finished_at: nowIso(), duration_ms: 1 };
+  ctx = reduce(ctx, ev('validation_result', 'operator', { request_id: 'r1', validated: true, stub: true, summary: 'stub', tests: [{ ...okTest, stub: true }], verifies_research_ids: ['res1'] })).context;
+  assert.equal(ctx.research[0].verification_status, 'FOUND');
+  ctx = reduce(ctx, ev('validation_result', 'operator', { request_id: 'r2', validated: true, summary: 'real', tests: [okTest], verifies_research_ids: ['res1'] })).context;
+  assert.equal(ctx.research[0].verification_status, 'VERIFIED');
+  assert.equal(ctx.workshop.research[0].verification_status, 'VERIFIED');
+  assert.equal(ctx.workshop.lab.validated, true);
+});
+
 test('workshop_updated cannot flip validated to true', () => {
   let ctx = initialContext('s', nowIso());
   const ws = { ...ctx.workshop, title: 'X', lab: { description: 'lab', validated: true } };

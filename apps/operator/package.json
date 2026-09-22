@@ -2,24 +2,18 @@
   "name": "@wasp/operator",
   "version": "0.1.0",
   "private": true,
-  "description": "WASP ORANGE agent — operator / sandbox engineer (Felipe).",
   "type": "module",
+  "description": "ORANGE — Operator / Sandbox agent: Docker lab, allowlisted tools, honest results. Owner: Felipe.",
+  "main": "./src/main.ts",
   "scripts": {
     "start": "tsx src/main.ts",
-    "demo": "tsx src/main.ts --local",
-    "demo:fake": "tsx src/main.ts --local --fake-docker",
+    "start:fake": "tsx src/main.ts --fake-docker",
     "sandbox:build": "tsx src/main.ts --build",
-    "test": "node --import tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@wasp/tools": "file:../../packages/tools",
-    "ws": "^8.18.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.7.0",
-    "@types/ws": "^8.5.12",
-    "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "@wasp/event-bus": "*",
+    "@wasp/shared-types": "*",
+    "@wasp/tools": "*"
   }
 }

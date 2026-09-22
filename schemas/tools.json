@@ -12,7 +12,7 @@
       "args": {}
     },
     {
-      "name": "sandbox_create",
+      "name": "docker_sandbox",
       "description": "Create the isolated Linux sandbox attached to the internal lab network (no internet egress).",
       "risk": "MEDIUM",
       "requires_approval": true,

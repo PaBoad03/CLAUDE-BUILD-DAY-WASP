@@ -12,6 +12,9 @@
     "hub": "tsx apps/hub/src/index.ts",
     "stubs": "tsx apps/hub/src/stubs.ts",
     "architect": "tsx apps/architect/src/index.ts",
+    "researcher": "tsx apps/researcher/src/agent/main.ts",
+    "operator": "tsx apps/operator/src/main.ts",
+    "security": "tsx apps/security/src/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test \"apps/**/*.test.ts\" \"packages/**/*.test.ts\""
   },

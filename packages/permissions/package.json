@@ -4,12 +4,17 @@
   "private": true,
   "type": "module",
   "description": "GREEN security layer: risk classification, permission engine, human voice authorization, GREEN agent runtime. Owner: Juanda.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
-  "types": "./src/index.ts",
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts"
+  },
   "dependencies": {
-    "@wasp/shared-types": "*",
-    "@wasp/audit": "*"
+    "@wasp/audit": "*",
+    "@wasp/event-bus": "*",
+    "@wasp/shared-types": "*"
   }
 }

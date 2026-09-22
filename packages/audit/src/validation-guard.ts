@@ -4,25 +4,27 @@ import type { AuditEntry, WorkshopSpec } from '@wasp/shared-types';
  * "The system must never claim successful execution without actual evidence."
  * (CONTEXT.md §20)
  *
- * `WorkshopSpec.lab.validated` may only be true when the audit contains a
- * real, successful sandbox test for that session. CYAN should call
- * canMarkValidated() before flipping the flag, and GREEN's adversarial tests
- * assert it.
+ * `WorkshopSpec.lab.validated` may only be true when the audit contains a real
+ * (non-stub), successful sandbox test. The hub reducer enforces this on
+ * `validation_result`; GREEN uses these helpers to cross-check any claim
+ * (workshop_updated, spoken lines, final_response) against the audit stream.
  */
 
-const VALIDATION_ACTIONS = new Set(['sandbox_result', 'sandbox_test', 'validate_lab', 'lab_validation']);
+/** Tools that touch the sandbox but are not evidence that an exercise works. */
+const NOT_EVIDENCE = new Set(['sandbox_status', 'sandbox_destroy', 'docker_sandbox', 'sandbox_network_external']);
 
-export function validationEvidence(audit: AuditEntry[], session_id: string): AuditEntry[] {
-  return audit.filter(
-    (e) =>
-      e.session_id === session_id &&
-      e.status === 'success' &&
-      (e.tool.startsWith('sandbox') || VALIDATION_ACTIONS.has(e.action) || e.action.startsWith('sandbox')),
-  );
+export function isValidationEvidence(e: AuditEntry): boolean {
+  if (e.status !== 'success' || e.stub) return false;
+  const tool = e.action;
+  return tool.startsWith('sandbox_') && !NOT_EVIDENCE.has(tool);
 }
 
-export function canMarkValidated(audit: AuditEntry[], session_id: string): boolean {
-  return validationEvidence(audit, session_id).length > 0;
+export function validationEvidence(audit: AuditEntry[]): AuditEntry[] {
+  return audit.filter(isValidationEvidence);
+}
+
+export function canMarkValidated(audit: AuditEntry[]): boolean {
+  return validationEvidence(audit).length > 0;
 }
 
 export interface ValidationClaimCheck {
@@ -36,22 +38,12 @@ export interface ValidationClaimCheck {
  * Cross-check a workshop that CLAIMS validation against the audit.
  * Returns ok=false when the spec says validated but there is no evidence.
  */
-export function checkValidationClaim(
-  workshop: Pick<WorkshopSpec, 'lab'> | { lab?: { validated?: boolean } } | undefined,
-  audit: AuditEntry[],
-  session_id: string,
-): ValidationClaimCheck {
+export function checkValidationClaim(workshop: Pick<WorkshopSpec, 'lab'> | { lab?: { validated?: boolean } } | undefined, audit: AuditEntry[]): ValidationClaimCheck {
   const claimed = workshop?.lab?.validated === true;
-  const evidence = validationEvidence(audit, session_id);
-  if (!claimed) {
-    return { ok: true, message: 'Workshop does not claim validation.', evidence };
-  }
+  const evidence = validationEvidence(audit);
+  if (!claimed) return { ok: true, message: 'Workshop does not claim validation.', evidence };
   if (evidence.length === 0) {
-    return {
-      ok: false,
-      message: 'Workshop claims lab.validated=true but the audit has no successful sandbox test for this session. Claim rejected.',
-      evidence,
-    };
+    return { ok: false, message: 'Workshop claims lab.validated=true but the audit has no successful real sandbox test. Claim rejected.', evidence };
   }
   return { ok: true, message: `Validation claim is backed by ${evidence.length} audit entr${evidence.length === 1 ? 'y' : 'ies'}.`, evidence };
 }

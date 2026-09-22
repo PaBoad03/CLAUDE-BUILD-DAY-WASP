@@ -1,150 +1,131 @@
-import { describe, expect, it } from 'vitest';
-import { PermissionEngine } from '../src/engine.ts';
-import { LocalEventBus } from '../src/testing/local-bus.ts';
-import { SESSION, fakeNow, toolRequest } from './helpers.ts';
-
-function setup(opts: { timeout?: number } = {}) {
-  const bus = new LocalEventBus();
-  const engineOpts = { bus, now: fakeNow, ...(opts.timeout !== undefined ? { pending_timeout_ms: opts.timeout } : {}) };
-  const engine = new PermissionEngine(engineOpts);
-  return { bus, engine };
-}
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { PermissionEngine } from '../src/engine';
+import { req } from './policies.test';
 
 describe('PermissionEngine.request', () => {
-  it('MEDIUM tool -> PENDING + permission_requested + security_evaluated', () => {
-    const { bus, engine } = setup();
-    const p = engine.request(toolRequest());
-    expect(p.status).toBe('PENDING');
-    expect(p.risk_level).toBe('MEDIUM');
-    expect(engine.isAuthorized(p.request_id)).toBe(false);
-    expect(bus.ofType('security_evaluated')).toHaveLength(1);
-    expect(bus.ofType('permission_requested')).toHaveLength(1);
-    expect(p.prompt_for_human).toContain('create_sandbox');
+  it('MEDIUM tool -> AWAITING_HUMAN with a human prompt (permission_required)', () => {
+    const e = new PermissionEngine();
+    const r = e.request(req());
+    assert.equal(r.outcome, 'AWAITING_HUMAN');
+    assert.equal(r.record.status, 'AWAITING_HUMAN');
+    assert.equal(r.record.risk, 'MEDIUM');
+    assert.equal(e.isAuthorized(r.record.permission_id), false);
+    assert.match(r.required!.human_prompt, /docker_sandbox/);
+    assert.equal(r.required!.approval_required, true);
+    assert.equal(r.decision, undefined);
   });
 
-  it('LOW tool -> GRANTED by policy, no human needed', () => {
-    const { bus, engine } = setup();
-    const p = engine.request(toolRequest({ tool: 'sandbox_ping', input: { target: '127.0.0.1' } }));
-    expect(p.status).toBe('GRANTED');
-    expect(p.decided_by).toBe('policy');
-    expect(engine.isAuthorized(p.request_id)).toBe(true);
-    expect(bus.ofType('permission_granted')).toHaveLength(1);
-    expect(bus.ofType('permission_requested')).toHaveLength(0);
+  it('LOW tool -> AUTO_APPROVED by policy (permission_granted, decided_by security)', () => {
+    const e = new PermissionEngine();
+    const r = e.request(req({ operation: 'sandbox_ping', proposed_risk: 'LOW', input: { target: '127.0.0.1' } }));
+    assert.equal(r.outcome, 'AUTO_APPROVED');
+    assert.equal(r.decision!.status, 'AUTO_APPROVED');
+    assert.equal(r.decision!.decided_by, 'security');
+    assert.equal(e.isAuthorized(r.record.permission_id), true);
   });
 
-  it('CRITICAL tool -> BLOCKED + tool_blocked, and can never be granted', () => {
-    const { bus, engine } = setup();
-    const p = engine.request(toolRequest({ tool: 'host_shell', operation: 'Get-Process' }));
-    expect(p.status).toBe('BLOCKED');
-    expect(bus.ofType('tool_blocked')).toHaveLength(1);
-    const r = engine.decide(p.permission_id, 'GRANTED', 'ui', 'yes');
-    expect(r.ok).toBe(false);
-    expect(engine.get(p.permission_id)?.status).toBe('BLOCKED');
-    expect(engine.isAuthorized(p.request_id)).toBe(false);
-    const r2 = engine.decideFromTranscript(p.permission_id, 'sí');
-    expect(r2.ok).toBe(false);
-    expect(engine.isAuthorized(p.request_id)).toBe(false);
+  it('CRITICAL tool -> BLOCKED (permission_denied) and can never be granted', () => {
+    const e = new PermissionEngine();
+    const r = e.request(req({ operation: 'host_shell' }));
+    assert.equal(r.outcome, 'BLOCKED');
+    assert.equal(r.decision!.status, 'BLOCKED');
+    const d1 = e.decide(r.record.permission_id, 'YES', 'yes', 'ui');
+    assert.equal(d1.ok, false);
+    const d2 = e.decideFromTranscript(r.record.permission_id, 'sí', 'voice');
+    assert.equal(d2.ok, false);
+    assert.equal(d2.clarification, undefined); // nothing to clarify: it is blocked, not pending
+    assert.equal(e.get(r.record.permission_id)!.status, 'BLOCKED');
+    assert.equal(e.isAuthorized(r.record.permission_id), false);
   });
 
-  it('is idempotent per request_id', () => {
-    const { bus, engine } = setup();
-    const req = toolRequest();
-    const a = engine.request(req);
-    const b = engine.request(req);
-    expect(a.permission_id).toBe(b.permission_id);
-    expect(bus.ofType('permission_requested')).toHaveLength(1);
+  it('is idempotent per permission_id', () => {
+    const e = new PermissionEngine();
+    const p = req();
+    const a = e.request(p);
+    const b = e.request(p);
+    assert.equal(b.outcome, 'DUPLICATE');
+    assert.equal(a.record.permission_id, b.record.permission_id);
+    assert.equal(e.list().length, 1);
   });
 });
 
 describe('PermissionEngine.decide — only humans, only once', () => {
-  it('human "yes" via voice grants and emits permission_granted', () => {
-    const { bus, engine } = setup();
-    const p = engine.request(toolRequest());
-    const r = engine.decideFromTranscript(p.permission_id, 'Sí, procede');
-    expect(r.ok).toBe(true);
-    expect(r.permission.status).toBe('GRANTED');
-    expect(r.permission.decided_by).toBe('human');
-    expect(r.permission.decision_source).toBe('voice');
-    expect(r.permission.decision_transcript).toBe('Sí, procede');
-    expect(engine.isAuthorized(p.request_id)).toBe(true);
-    expect(bus.ofType('permission_granted')).toHaveLength(1);
+  it('human "sí, procede" via voice grants (permission_granted, decided_by human, raw kept for audit)', () => {
+    const e = new PermissionEngine();
+    const p = e.request(req()).record;
+    const r = e.decideFromTranscript(p.permission_id, 'Sí, procede', 'voice');
+    assert.equal(r.ok, true);
+    assert.equal(r.decision!.status, 'GRANTED');
+    assert.equal(r.decision!.decided_by, 'human');
+    assert.equal(r.decision!.human_raw, 'Sí, procede');
+    assert.equal(e.isAuthorized(p.permission_id), true);
   });
 
   it('human "no" denies', () => {
-    const { bus, engine } = setup();
-    const p = engine.request(toolRequest());
-    const r = engine.decideFromTranscript(p.permission_id, 'no');
-    expect(r.permission.status).toBe('DENIED');
-    expect(engine.isAuthorized(p.request_id)).toBe(false);
-    expect(bus.ofType('permission_denied')).toHaveLength(1);
+    const e = new PermissionEngine();
+    const p = e.request(req()).record;
+    const r = e.decideFromTranscript(p.permission_id, 'no', 'voice');
+    assert.equal(r.decision!.status, 'DENIED');
+    assert.equal(e.isAuthorized(p.permission_id), false);
   });
 
   it('human "stop" cancels', () => {
-    const { bus, engine } = setup();
-    const p = engine.request(toolRequest());
-    const r = engine.decideFromTranscript(p.permission_id, 'stop');
-    expect(r.permission.status).toBe('CANCELLED');
-    expect(bus.ofType('permission_cancelled')).toHaveLength(1);
+    const e = new PermissionEngine();
+    const p = e.request(req()).record;
+    assert.equal(e.decideFromTranscript(p.permission_id, 'stop', 'voice').decision!.status, 'CANCELLED');
   });
 
-  it('ambiguous speech leaves it PENDING and asks again', () => {
-    const { bus, engine } = setup();
-    const p = engine.request(toolRequest());
-    const r = engine.decideFromTranscript(p.permission_id, 'do what you think');
-    expect(r.ok).toBe(false);
-    expect(engine.get(p.permission_id)?.status).toBe('PENDING');
-    expect(engine.isAuthorized(p.request_id)).toBe(false);
-    const clar = bus.ofType('permission_clarification_needed');
-    expect(clar).toHaveLength(1);
-    expect((clar[0]!.payload as { reprompt: string }).reprompt).toContain('create_sandbox');
+  it('ambiguous speech leaves it AWAITING_HUMAN and returns a clarification prompt', () => {
+    const e = new PermissionEngine();
+    const p = e.request(req()).record;
+    const r = e.decideFromTranscript(p.permission_id, 'do what you think', 'voice');
+    assert.equal(r.ok, false);
+    assert.equal(e.get(p.permission_id)!.status, 'AWAITING_HUMAN');
+    assert.equal(e.isAuthorized(p.permission_id), false);
+    assert.match(r.clarification!.human_prompt, /docker_sandbox/);
+  });
+
+  it('a UI button is trusted when its label is not a phrase; a voice "decision" field is not', () => {
+    const e = new PermissionEngine();
+    const p = e.request(req()).record;
+    // voice bridge claims YES but the transcript is ambiguous → still ambiguous
+    assert.equal(e.decideFromTranscript(p.permission_id, 'hmm', 'voice', 'YES').ok, false);
+    // UI button with an odd label but explicit decision → accepted
+    assert.equal(e.decideFromTranscript(p.permission_id, 'APPROVE ✔', 'ui', 'YES').decision!.status, 'GRANTED');
   });
 
   it('a decision cannot be changed once made (no re-grant after deny)', () => {
-    const { engine } = setup();
-    const p = engine.request(toolRequest());
-    engine.decide(p.permission_id, 'DENIED', 'ui', 'no');
-    const r = engine.decide(p.permission_id, 'GRANTED', 'ui', 'yes');
-    expect(r.ok).toBe(false);
-    expect(engine.isAuthorized(p.request_id)).toBe(false);
-  });
-
-  it('rejects non-human decision sources', () => {
-    const { engine } = setup();
-    const p = engine.request(toolRequest());
-    // @ts-expect-error — deliberately violating the type to simulate a forged caller
-    const r = engine.decide(p.permission_id, 'GRANTED', 'policy', 'model said so');
-    expect(r.ok).toBe(false);
-    expect(engine.isAuthorized(p.request_id)).toBe(false);
+    const e = new PermissionEngine();
+    const p = e.request(req()).record;
+    e.decide(p.permission_id, 'NO', 'no', 'ui');
+    assert.equal(e.decide(p.permission_id, 'YES', 'yes', 'ui').ok, false);
+    assert.equal(e.isAuthorized(p.permission_id), false);
   });
 
   it('unknown permission ids are rejected', () => {
-    const { engine } = setup();
-    const r = engine.decide('perm_nope', 'GRANTED', 'ui', 'yes');
-    expect(r.ok).toBe(false);
-    expect(engine.isAuthorized('req_nope')).toBe(false);
+    const e = new PermissionEngine();
+    assert.equal(e.decide('perm_nope', 'YES', 'yes', 'ui').ok, false);
+    assert.equal(e.isAuthorized('perm_nope'), false);
   });
 
-  it('cancelAllPending cancels every PENDING permission in the session', () => {
-    const { engine } = setup();
-    engine.request(toolRequest());
-    engine.request(toolRequest({ tool: 'sandbox_network', operation: 'enable_network' }));
-    engine.request(toolRequest({ session_id: 'other' }));
-    const cancelled = engine.cancelAllPending(SESSION, 'stop');
-    expect(cancelled).toHaveLength(2);
-    expect(engine.pending(SESSION)).toHaveLength(0);
-    expect(engine.pending('other')).toHaveLength(1);
+  it('cancelAllPending cancels every AWAITING_HUMAN permission', () => {
+    const e = new PermissionEngine();
+    e.request(req());
+    e.request(req({ operation: 'sandbox_network' }));
+    e.request(req({ operation: 'sandbox_ping', proposed_risk: 'LOW', input: { target: '127.0.0.1' } })); // auto-approved, untouched
+    const cancelled = e.cancelAllPending('stop', 'voice');
+    assert.equal(cancelled.length, 2);
+    assert.equal(e.pending().length, 0);
+    assert.equal(e.list().filter((p) => p.status === 'AUTO_APPROVED').length, 1);
   });
-});
 
-describe('PermissionEngine timeouts', () => {
-  it('expires PENDING permissions after the timeout', async () => {
-    const { bus, engine } = setup({ timeout: 20 });
-    const p = engine.request(toolRequest());
-    await new Promise((r) => setTimeout(r, 60));
-    expect(engine.get(p.permission_id)?.status).toBe('EXPIRED');
-    expect(bus.ofType('permission_expired')).toHaveLength(1);
-    const r = engine.decide(p.permission_id, 'GRANTED', 'ui', 'yes');
-    expect(r.ok).toBe(false);
-    engine.dispose();
+  it('expire moves AWAITING_HUMAN to EXPIRED and nothing can grant it afterwards', () => {
+    const e = new PermissionEngine();
+    const p = e.request(req()).record;
+    const r = e.expire(p.permission_id);
+    assert.equal(r.decision!.status, 'EXPIRED');
+    assert.equal(r.decision!.decided_by, 'security');
+    assert.equal(e.decide(p.permission_id, 'YES', 'yes', 'ui').ok, false);
   });
 });

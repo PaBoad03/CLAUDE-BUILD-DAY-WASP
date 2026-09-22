@@ -1,80 +1,91 @@
-import { describe, expect, it } from 'vitest';
-import { ToolPolicyRegistry } from '../src/policies.ts';
-import { toolRequest } from './helpers.ts';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import type { PermissionRequest } from '@wasp/shared-types';
+import { ToolPolicyRegistry } from '../src/policies';
+
+let n = 0;
+export function req(over: Partial<PermissionRequest> = {}): PermissionRequest {
+  return { permission_id: `perm_${++n}`, requested_by: 'operator', operation: 'docker_sandbox', reason: 'validate the network workshop lab', proposed_risk: 'MEDIUM', input: { network: 'CONTROLLED' }, ...over };
+}
 
 const reg = new ToolPolicyRegistry();
 
 describe('ToolPolicyRegistry.evaluate', () => {
   it('LOW tools need no approval', () => {
-    const ev = reg.evaluate(toolRequest({ tool: 'sandbox_ping', operation: 'ping 127.0.0.1', input: { target: '127.0.0.1' } }));
-    expect(ev.risk_level).toBe('LOW');
-    expect(ev.approval_required).toBe(false);
-    expect(ev.allowed).toBe(true);
+    const ev = reg.evaluate(req({ operation: 'sandbox_ping', proposed_risk: 'LOW', input: { target: '127.0.0.1' } }));
+    assert.equal(ev.risk_level, 'LOW');
+    assert.equal(ev.approval_required, false);
+    assert.equal(ev.allowed, true);
   });
 
   it('docker_sandbox is MEDIUM and needs approval', () => {
-    const ev = reg.evaluate(toolRequest());
-    expect(ev.risk_level).toBe('MEDIUM');
-    expect(ev.approval_required).toBe(true);
-    expect(ev.allowed).toBe(true);
+    const ev = reg.evaluate(req());
+    assert.equal(ev.risk_level, 'MEDIUM');
+    assert.equal(ev.approval_required, true);
+    assert.equal(ev.allowed, true);
   });
 
   it('unknown tools fail closed: HIGH + approval', () => {
-    const ev = reg.evaluate(toolRequest({ tool: 'totally_new_tool' }));
-    expect(ev.risk_level).toBe('HIGH');
-    expect(ev.approval_required).toBe(true);
-    expect(ev.allowed).toBe(true);
-    expect(ev.matched_policy).toBe('default');
+    const ev = reg.evaluate(req({ operation: 'totally_new_tool', proposed_risk: undefined }));
+    assert.equal(ev.risk_level, 'HIGH');
+    assert.equal(ev.approval_required, true);
+    assert.equal(ev.allowed, true);
+    assert.equal(ev.matched_policy, 'default');
   });
 
   it('host_shell is CRITICAL and blocked even though it "requires approval"', () => {
-    const ev = reg.evaluate(toolRequest({ tool: 'host_shell', operation: 'dir C:\\' }));
-    expect(ev.risk_level).toBe('CRITICAL');
-    expect(ev.allowed).toBe(false);
-    expect(ev.blocked_reason).toBeTruthy();
+    const ev = reg.evaluate(req({ operation: 'host_shell' }));
+    assert.equal(ev.risk_level, 'CRITICAL');
+    assert.equal(ev.allowed, false);
+    assert.ok(ev.blocked_reason);
+  });
+
+  it('the requester can raise its own risk estimate but never lower it', () => {
+    assert.equal(reg.evaluate(req({ operation: 'sandbox_ping', proposed_risk: 'HIGH', input: { target: '127.0.0.1' } })).risk_level, 'HIGH');
+    assert.equal(reg.evaluate(req({ operation: 'docker_sandbox', proposed_risk: 'LOW' })).risk_level, 'MEDIUM');
   });
 
   it('escalates a LOW tool to HIGH when input asks for external network', () => {
-    const ev = reg.evaluate(toolRequest({ tool: 'sandbox_ping', input: { target: '127.0.0.1', network_access: 'external' } }));
-    expect(ev.risk_level).toBe('HIGH');
-    expect(ev.approval_required).toBe(true);
+    const ev = reg.evaluate(req({ operation: 'sandbox_ping', proposed_risk: 'LOW', input: { target: '127.0.0.1', network_access: 'external' } }));
+    assert.equal(ev.risk_level, 'HIGH');
+    assert.equal(ev.approval_required, true);
   });
 
   it('escalates when the target is a public host', () => {
-    const ev = reg.evaluate(toolRequest({ tool: 'sandbox_ping', input: { target: '8.8.8.8' } }));
-    expect(ev.risk_level).toBe('HIGH');
-    const ev2 = reg.evaluate(toolRequest({ tool: 'sandbox_http_local', input: { url: 'https://example.com/x' } }));
-    expect(ev2.risk_level).toBe('HIGH');
+    assert.equal(reg.evaluate(req({ operation: 'sandbox_ping', proposed_risk: 'LOW', input: { target: '8.8.8.8' } })).risk_level, 'HIGH');
+    assert.equal(reg.evaluate(req({ operation: 'sandbox_http', proposed_risk: 'LOW', input: { url: 'https://example.com/x' } })).risk_level, 'HIGH');
   });
 
   it('keeps private / lab targets at declared risk', () => {
-    for (const target of ['127.0.0.1', 'localhost', '192.168.1.10', '10.0.0.5', 'target.lab', 'http://localhost:8080/health']) {
-      const ev = reg.evaluate(toolRequest({ tool: 'sandbox_ping', input: { target } }));
-      expect(ev.risk_level, target).toBe('LOW');
+    for (const target of ['127.0.0.1', 'localhost', '192.168.1.10', '10.0.0.5', 'target.lab', 'wasp-target', 'http://localhost:8080/health', 'http://wasp-target/']) {
+      const ev = reg.evaluate(req({ operation: 'sandbox_ping', proposed_risk: 'LOW', input: { target } }));
+      assert.equal(ev.risk_level, 'LOW', target);
     }
   });
 
   it('blocks host-shell-looking commands smuggled into any tool input', () => {
-    const ev = reg.evaluate(toolRequest({ tool: 'sandbox_ping', input: { command: 'powershell -c Remove-Item -Recurse C:\\' } }));
-    expect(ev.allowed).toBe(false);
-    expect(ev.risk_level).toBe('CRITICAL');
-    const ev2 = reg.evaluate(toolRequest({ tool: 'sandbox_dns', input: { cmd: 'rm -rf /' } }));
-    expect(ev2.allowed).toBe(false);
-    const ev3 = reg.evaluate(toolRequest({ tool: 'sandbox_dns', input: { on_host: true } }));
-    expect(ev3.allowed).toBe(false);
+    assert.equal(reg.evaluate(req({ operation: 'sandbox_ping', input: { command: 'powershell -c Remove-Item -Recurse C:\\' } })).allowed, false);
+    assert.equal(reg.evaluate(req({ operation: 'sandbox_dns', input: { cmd: 'rm -rf /' } })).allowed, false);
+    assert.equal(reg.evaluate(req({ operation: 'sandbox_dns', input: { on_host: true } })).allowed, false);
   });
 
   it('blocks a tool requested by an agent that is not allowed to use it', () => {
-    const ev = reg.evaluate(toolRequest({ tool: 'docker_sandbox', agent: 'researcher' }));
-    expect(ev.allowed).toBe(false);
-    expect(ev.rationale).toContain('not allowed');
+    const ev = reg.evaluate(req({ operation: 'docker_sandbox', requested_by: 'researcher' }));
+    assert.equal(ev.allowed, false);
+    assert.match(ev.rationale, /not allowed/);
   });
 
-  it('supports registering new policies (ORANGE can add tools)', () => {
+  it('merges ORANGE tools_registered: adds unknown tools, escalates but never lowers known ones', () => {
     const r = new ToolPolicyRegistry();
-    r.registerPolicy({ tool: 'sandbox_traceroute', risk_level: 'LOW', requires_approval: false, description: 'traceroute inside sandbox' });
-    const ev = r.evaluate(toolRequest({ tool: 'sandbox_traceroute', input: { target: '127.0.0.1' } }));
-    expect(ev.risk_level).toBe('LOW');
-    expect(ev.approval_required).toBe(false);
+    r.registerFromToolDefinitions([
+      { id: 'sandbox_traceroute', description: 'traceroute inside sandbox', owner: 'operator', risk: 'LOW', requires_approval: false, input_schema: {}, available: true },
+      { id: 'docker_sandbox', description: 'create sandbox', owner: 'operator', risk: 'LOW', requires_approval: false, input_schema: {}, available: true }, // ORANGE says LOW: ignored
+      { id: 'sandbox_port_check', description: 'nc', owner: 'operator', risk: 'HIGH', requires_approval: true, input_schema: {}, available: true }, // ORANGE says HIGH: escalated
+      { id: 'host_shell', description: 'shell', owner: 'operator', risk: 'LOW', requires_approval: false, input_schema: {}, available: true }, // blocked stays blocked
+    ]);
+    assert.equal(r.evaluate(req({ operation: 'sandbox_traceroute', proposed_risk: 'LOW', input: { target: '127.0.0.1' } })).risk_level, 'LOW');
+    assert.equal(r.evaluate(req({ operation: 'docker_sandbox' })).risk_level, 'MEDIUM');
+    assert.equal(r.evaluate(req({ operation: 'sandbox_port_check', input: { host: 'wasp-target', port: 80 } })).risk_level, 'HIGH');
+    assert.equal(r.evaluate(req({ operation: 'host_shell' })).allowed, false);
   });
 });

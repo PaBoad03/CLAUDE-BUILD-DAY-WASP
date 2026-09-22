@@ -26,9 +26,19 @@ export interface ToolRequest {
   input: Record<string, unknown>;
   /** Set once GREEN has granted (or auto-approved) the operation. */
   permission_id?: string;
+  /** Why the requester wants this; spoken to the human if approval is needed. */
+  reason?: string;
 }
 
-export type ToolStatus = 'success' | 'failure' | 'unavailable' | 'denied' | 'timeout';
+/**
+ * success      ran, and the test passed
+ * failure      ran, and the test failed (e.g. 100% packet loss) or could not run to completion
+ * unavailable  capability missing (Docker offline, sandbox not created)
+ * denied       GREEN / human said no, or the operation was cancelled
+ * rejected     never reached execution: unknown tool, off-allowlist args, no authorization
+ * timeout      the tool did not finish in time
+ */
+export type ToolStatus = 'success' | 'failure' | 'unavailable' | 'denied' | 'rejected' | 'timeout';
 
 export interface ToolResult {
   tool_id: string;
@@ -37,6 +47,15 @@ export interface ToolResult {
   /** Raw, real output (stdout, parsed JSON, ...). Never model-generated. */
   output?: unknown;
   error?: string;
+  /** One line suitable for TTS and the RESULT window. */
+  summary?: string;
+  /** Exact argv that was executed, or [] when nothing ran. Never fabricated. */
+  command?: string[];
+  exit_code?: number | null;
+  /** Validated input the tool actually ran with. */
+  input?: Record<string, unknown>;
+  /** Permission that authorized this run, if one was required. */
+  permission_id?: string;
   started_at: string;
   finished_at: string;
   duration_ms: number;
@@ -51,6 +70,9 @@ export interface SandboxState {
   network: 'NONE' | 'CONTROLLED' | 'EXTERNAL';
   last_test?: ToolResult;
   message?: string;
+  docker_version?: string;
+  /** Local HTTP/port target (e.g. nginx) reachable inside the lab network. */
+  target_available?: boolean;
 }
 
 /** CYAN → ORANGE: "can this exercise actually run in our lab?" */
@@ -60,6 +82,8 @@ export interface ValidationRequest {
   description: string;
   /** Tool ids ORANGE is expected to use, if known. */
   tools?: string[];
+  /** Research results this validation would confirm (FOUND → VERIFIED) if it succeeds. */
+  research_ids?: string[];
 }
 
 export interface ValidationResult {
@@ -68,5 +92,7 @@ export interface ValidationResult {
   validated: boolean;
   tests: ToolResult[];
   summary: string;
+  /** Research ids that a real, successful validation confirms. The hub marks them VERIFIED. */
+  verifies_research_ids?: string[];
   stub?: boolean;
 }

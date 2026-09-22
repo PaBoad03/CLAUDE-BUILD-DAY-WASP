@@ -24,12 +24,16 @@ npm install                      # Node >= 20, npm workspaces, no pnpm needed
 cp .env.example .env             # set WASP_HUB_URL=ws://<pablo-ip>:7331 unless you are Pablo
 
 npm run hub                      # Pablo's PC only — authoritative shared context on :7331
-npm run stubs                    # fake MAGENTA/ORANGE/GREEN so you can test alone
-npm run stubs -- operator security   # only the agents you are NOT building
+npm run researcher               # Andrea's PC  (MAGENTA agent; UI: npm run dev -w @wasp/researcher)
+npm run operator                 # Felipe's PC  (ORANGE agent + face on :7003; --fake-docker without Docker)
+npm run security                 # Juanda's PC  (GREEN agent + face on :7004)
+npm run stubs -- operator security   # fake any agent that is not running, so you can test alone
 npm run architect -- "WASP, create a two-hour beginner network reconnaissance workshop."
 
-npm run typecheck && npm test
+npm run typecheck && npm test    # node:test across every package; MAGENTA's vitest: npm test -w @wasp/researcher
 ```
+
+Solo rehearsal on one PC (no Docker): `npm run hub` · `npm run stubs -- researcher` · `npm run operator -- --fake-docker` · `npm run security` · `WASP_AUTO_ANSWER=yes npm run architect`.
 
 Open `http://<pablo-ip>:7331/context` in a browser to see the live shared context.
 
@@ -47,8 +51,10 @@ packages/
   event-bus/    HubClient: connect, emit, on, request/response, say, setState, audit              (Pablo)
   voice/        TTS/STT layer consuming speak_requested / emitting stt_transcript                 (Andrea)
   ui/           Shared face component + floating windows, parameterized by agent color            (Andrea)
-  permissions/  Risk classification + authorization engine                                        (Juanda)
-schemas/        JSON Schema mirrors of the main contracts                                         (Pablo)
+  permissions/  Risk classification + authorization engine + GREEN agent runtime                  (Juanda)
+  audit/        Audit view of the hub stream + lab.validated guard                                (Juanda)
+  tools/        Tool registry + allowlisted Docker executor                                       (Felipe)
+schemas/        JSON Schema mirrors of the main contracts (Pablo); tools.json = tool registry     (Felipe)
 docker/         Sandbox images                                                                    (Felipe)
 docs/           CONTRACT.md, GIT-RULES.md, decisions
 ```

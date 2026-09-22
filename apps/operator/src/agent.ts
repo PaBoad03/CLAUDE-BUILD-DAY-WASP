@@ -1,276 +1,264 @@
-import { randomUUID } from 'node:crypto';
-import {
-  ToolExecutor, ToolRegistry, sandboxState,
-  type AgentId, type AuditRecord, type OperatorFaceState, type PermissionDecision,
-  type PermissionRequest, type SandboxState, type SandboxDriver, type ToolRequest, type ToolResult, type WaspEvent,
-} from '@wasp/tools';
-import { makeEvent, type Bus } from './bus.js';
-import type { Speaker } from './voice.js';
+/**
+ * ORANGE — the operator agent, wired to the WASP HUB through @wasp/event-bus.
+ *
+ *   validation_request / tool_requested (to: operator)
+ *     → registry lookup (unknown tool / off-list args → rejected, nothing runs)
+ *     → permission_requested (to: security)      ALWAYS, even for LOW risk (GREEN audits everything)
+ *     → [requires_approval] wait for permission_granted from GREEN; denied/cancelled/offline → nothing runs
+ *     → tool_started → docker exec fixed argv → sandbox_test / sandbox_result / tool_finished + audit_event
+ *     → validation_result (validated only if every real test succeeded)
+ *
+ * The agent never authorizes itself. If GREEN is offline, approval-requiring tools do not run
+ * and the result says so. If Docker is offline, results are `unavailable`, never `success`.
+ */
 
-export const OPERATOR: AgentId = 'operator';
-const SECURITY: AgentId = 'security';
-const ARCHITECT: AgentId = 'architect';
+import type { HubClient } from '@wasp/event-bus';
+import { AgentUnavailableError, RequestTimeoutError } from '@wasp/event-bus';
+import { newId, type AuditEntry, type PermissionDecision, type PermissionRequest, type RiskLevel, type ToolRequest, type ToolResult, type ValidationRequest } from '@wasp/shared-types';
+import { ToolExecutor, ToolRegistry, labState, toSandboxState, toToolResult, type SandboxDriver, type ToolSpec } from '@wasp/tools';
+
+/** What the agent needs from the hub. `HubClient` and `FakeHub` (tests) both satisfy it. */
+export type HubLike = Pick<HubClient, 'agent' | 'onMine' | 'on' | 'emit' | 'say' | 'setState' | 'audit' | 'request' | 'isOnline'>;
 
 export interface OperatorOptions {
-  session_id: string;
-  bus: Bus;
+  hub: HubLike;
   registry: ToolRegistry;
   driver: SandboxDriver;
-  speaker: Speaker;
-  /** How long to wait for GREEN before giving up. Default 120 s (a human is answering). */
+  /** How long to wait for GREEN + the human. Default 120 s. */
   permissionTimeoutMs?: number;
-  /** For UI: called on every face state change. */
-  onFaceState?: (s: OperatorFaceState) => void;
-  onSandboxState?: (s: SandboxState) => void;
-  onResult?: (r: ToolResult) => void;
+  /** true when running against the FakeDriver: every result is marked stub and can never validate the lab. */
+  stub?: boolean;
+  log?: (msg: string) => void;
 }
 
-interface Pending {
-  resolve: (d: PermissionDecision) => void;
-  timer: NodeJS.Timeout;
+interface PlanStep {
+  tool_id: string;
+  input: Record<string, unknown>;
 }
 
-/**
- * The ORANGE agent.
- *
- *   tool_requested / validation_request (to: operator)
- *     → registry lookup
- *     → permission_requested (to: security)            ALWAYS emitted, even for LOW
- *     → [requires_approval] wait for permission_granted/denied with same request_id
- *     → tool_started → execute → tool_finished (+ sandbox_* + audit_event)
- *     → validation_result if the request was a validation_request
- *
- * The agent never authorizes itself: with requires_approval=true and no
- * `permission_granted` from GREEN, nothing runs. If GREEN is offline the
- * request times out and is reported as such — never as success.
- */
+/** What "validate the lab" means when CYAN does not name tools: create the sandbox, then the safe tests. */
+export const DEFAULT_VALIDATION_PLAN: PlanStep[] = [
+  { tool_id: 'docker_sandbox', input: {} },
+  { tool_id: 'sandbox_ping', input: { target: '127.0.0.1' } },
+  { tool_id: 'sandbox_dns', input: { name: 'wasp-target' } },
+  { tool_id: 'sandbox_http', input: { url: 'http://wasp-target/' } },
+  { tool_id: 'sandbox_routes', input: {} },
+];
+
+const DEFAULT_INPUTS: Record<string, Record<string, unknown>> = Object.fromEntries(DEFAULT_VALIDATION_PLAN.map((s) => [s.tool_id, s.input]));
+
 export class OperatorAgent {
+  private readonly hub: HubLike;
   private readonly executor: ToolExecutor;
-  private readonly pending = new Map<string, Pending>();
-  private unsubscribe: (() => void) | null = null;
-  private face: OperatorFaceState = 'IDLE';
-  private busy = Promise.resolve();
+  private readonly log: (m: string) => void;
+  private queue: Promise<unknown> = Promise.resolve();
+  private offs: Array<() => void> = [];
+  private dockerAvailable = false;
 
   constructor(private readonly o: OperatorOptions) {
+    this.hub = o.hub;
     this.executor = new ToolExecutor(o.registry, o.driver);
+    this.log = o.log ?? (() => {});
   }
 
-  async start() {
-    this.unsubscribe = this.o.bus.subscribe((e) => this.onEvent(e));
-    const state = await sandboxState(this.o.driver);
-    this.o.onSandboxState?.(state);
-    await this.emit('agent_started', 'broadcast', {
-      agent: OPERATOR,
-      capabilities: this.o.registry.list().map((t) => ({ name: t.name, risk: t.risk, requires_approval: t.requires_approval })),
-      sandbox: state,
-    });
-    if (!state.docker_available) {
-      await this.warn(`Docker capability is unavailable. I cannot validate the laboratory. (${state.last_error ?? 'no details'})`);
-      this.setFace('OFFLINE');
+  async start(): Promise<void> {
+    const lab = await labState(this.o.driver);
+    this.dockerAvailable = lab.docker_available;
+    this.hub.emit('tools_registered', { tools: this.o.registry.toToolDefinitions({ available: lab.docker_available, unavailable_reason: lab.last_error }) });
+    this.hub.emit('sandbox_state', toSandboxState(lab));
+    if (!lab.docker_available) {
+      this.hub.setState('ERROR', 'Docker unavailable');
+      this.hub.say('architect', `Docker capability is unavailable. I cannot validate the laboratory.${this.o.stub ? ' [stub]' : ''}`, 'capability_unavailable');
+      this.hub.emit('warning', { message: `Docker capability is unavailable: ${lab.last_error ?? 'unknown error'}` });
     } else {
-      this.setFace('IDLE');
+      this.hub.setState('IDLE', `Docker ${lab.docker_version}`);
     }
+    this.offs.push(
+      this.hub.onMine('validation_request', (evt) => this.enqueue(() => this.validate(evt.payload, evt.from, evt.correlation_id))),
+      this.hub.onMine('tool_requested', (evt) => this.enqueue(() => this.runTool(evt.payload)).then(() => undefined)),
+    );
+    this.log(`operator ready (docker ${lab.docker_available ? lab.docker_version : 'OFFLINE'}, ${this.o.registry.list().length} tools)`);
   }
 
-  async stop() {
-    this.unsubscribe?.();
-    for (const p of this.pending.values()) clearTimeout(p.timer);
-    this.pending.clear();
-    await this.emit('agent_finished', 'broadcast', { agent: OPERATOR });
+  stop(): void {
+    for (const off of this.offs) off();
+    this.offs = [];
+    this.hub.setState('OFFLINE');
   }
 
-  // ─── inbound ────────────────────────────────────────────────────────────────
+  /** Serialise work: one tool at a time keeps the terminal window and the spoken lines coherent. */
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(fn, fn);
+    this.queue = next.catch((err) => {
+      this.log(`internal error: ${(err as Error).message}`);
+      this.hub.emit('error', { message: `operator internal error: ${(err as Error).message}` });
+    });
+    return next;
+  }
 
-  private onEvent(e: WaspEvent) {
-    if (e.from === OPERATOR) return;
-    const forMe = e.to === OPERATOR || e.to === 'broadcast';
+  // ------------------------------------------------------------------ validation (CYAN → ORANGE)
 
-    if ((e.type === 'permission_granted' || e.type === 'permission_denied') && forMe) {
-      const d = e.payload as PermissionDecision;
-      const p = d?.request_id ? this.pending.get(d.request_id) : undefined;
-      if (!p) return; // not ours, or already resolved
-      if (e.from !== SECURITY) {
-        // Only GREEN may decide. Anyone else spoofing a grant is ignored and reported.
-        void this.warn(`Ignored ${e.type} for ${d.request_id} from "${e.from}": only security may authorize.`);
-        return;
-      }
-      clearTimeout(p.timer);
-      this.pending.delete(d.request_id);
-      p.resolve({ ...d, granted: e.type === 'permission_granted' && d.granted !== false });
+  async validate(req: ValidationRequest, from: HubLike['agent'] | 'hub' | 'human' | 'all', correlation_id?: string): Promise<void> {
+    const to = from === 'all' || from === 'hub' || from === 'human' ? 'architect' : from;
+    const corr = correlation_id ?? req.request_id;
+    const reply = (validated: boolean, tests: ToolResult[], summary: string) =>
+      this.hub.emit(
+        'validation_result',
+        { request_id: req.request_id, validated, tests, summary, verifies_research_ids: validated ? req.research_ids : undefined, stub: this.o.stub || undefined },
+        { to, correlation_id: corr },
+      );
+
+    this.hub.setState('PREPARING', req.description.slice(0, 60));
+    const lab = await labState(this.o.driver);
+    this.dockerAvailable = lab.docker_available;
+    if (!lab.docker_available) {
+      this.hub.setState('ERROR', 'Docker unavailable');
+      const msg = `Docker capability is unavailable. I cannot validate the laboratory.${this.o.stub ? ' [stub]' : ''}`;
+      this.hub.say(to, msg, 'validation_unavailable');
+      this.hub.emit('sandbox_state', toSandboxState(lab));
+      reply(false, [], `${msg} (${lab.last_error ?? 'no details'})`);
       return;
     }
 
-    if ((e.type === 'tool_requested' || e.type === 'validation_request') && e.to === OPERATOR) {
-      const req = normalise(e.payload, e.from);
-      // Serialise: one tool at a time keeps the terminal window and TTS coherent.
-      this.busy = this.busy.then(async () => { await this.handle(req, e.type === 'validation_request'); }).catch((err) => {
-        void this.warn(`Internal error handling ${req.request_id}: ${(err as Error).message}`);
-      });
+    const plan: PlanStep[] = req.tools?.length ? req.tools.map((tool_id) => ({ tool_id, input: DEFAULT_INPUTS[tool_id] ?? {} })) : DEFAULT_VALIDATION_PLAN;
+    const needsApproval = plan.some((s) => this.o.registry.get(s.tool_id)?.requires_approval);
+    this.hub.say(to, needsApproval ? 'I can test this in the isolated sandbox. Creating it requires authorization from Security.' : 'I can test this in the isolated sandbox.', 'ack');
+
+    const tests: ToolResult[] = [];
+    for (const step of plan) {
+      const result = await this.runTool({ tool_id: step.tool_id, request_id: newId('tool'), requested_by: to === 'architect' || to === 'researcher' ? to : 'architect', input: step.input, reason: req.description });
+      tests.push(result);
+      if (result.status !== 'success') break; // honest: stop at the first thing that did not work
     }
+
+    const real = tests.filter((t) => t.tool_id !== 'docker_sandbox' && t.tool_id !== 'sandbox_status');
+    const validated = tests.length > 0 && tests.every((t) => t.status === 'success') && real.length > 0 && !this.o.stub;
+    const last = tests[tests.length - 1];
+    const summary = validated
+      ? `Laboratory validated: ${real.length} real test${real.length === 1 ? '' : 's'} passed inside the isolated sandbox (${real.map((t) => t.tool_id).join(', ')}).`
+      : this.o.stub && tests.every((t) => t.status === 'success')
+        ? `Fake Docker driver: ${tests.length} steps ran, but nothing real was executed. Laboratory NOT validated. [stub]`
+        : `Laboratory NOT validated: ${last ? `${last.tool_id} → ${last.status}${last.summary ? ` (${last.summary})` : ''}` : 'no test ran'}.`;
+
+    this.hub.setState(validated ? 'SUCCESS' : 'WARNING', validated ? 'lab validated' : 'lab not validated');
+    this.hub.say(to, validated ? `Laboratory validated. ${real.length} tests passed in the sandbox.` : summary, validated ? 'validation_complete' : 'validation_failed');
+    reply(validated, tests, summary);
   }
 
-  // ─── core flow ──────────────────────────────────────────────────────────────
+  // ------------------------------------------------------------------ one tool (permission → execute → report)
 
-  async handle(req: ToolRequest, isValidation: boolean): Promise<ToolResult> {
-    this.setFace('PREPARING');
-    const spec = this.o.registry.get(req.tool);
-    const startedAt = new Date().toISOString();
-
+  async runTool(req: ToolRequest): Promise<ToolResult> {
+    const spec = this.o.registry.get(req.tool_id);
+    const started_at = new Date().toISOString();
     if (!spec) {
-      const r = rejected(req, startedAt, `Unknown tool "${req.tool}". Nothing executed.`);
-      await this.finish(req, r, isValidation, { risk: 'LOW', approval_required: false, approval_status: 'not_required' });
-      return r;
+      return this.finish(req, rejected(req, started_at, `Unknown tool "${req.tool_id}". Nothing executed.`, this.o.stub), { risk: 'LOW', approval_required: false });
     }
 
-    // Always tell GREEN, even for LOW-risk tools: they audit everything.
+    // Ask GREEN. Always — LOW tools do not wait for the answer, but GREEN sees and audits every request.
+    const permission_id = newId('perm');
     const permission: PermissionRequest = {
-      request_id: req.request_id,
-      tool: req.tool,
-      args: req.args,
-      risk: spec.risk,
-      requires_approval: spec.requires_approval,
-      reason: req.reason,
-      requested_by: req.requested_by,
-      summary: spec.description,
+      permission_id,
+      requested_by: 'operator',
+      operation: req.tool_id,
+      reason: req.reason ?? spec.description,
+      proposed_risk: spec.risk,
+      input: { ...req.input, request_id: req.request_id, on_behalf_of: req.requested_by },
     };
-    // Register the wait BEFORE publishing: a fast policy-based GREEN may answer
-    // in the same tick, and a grant that arrives before we listen must not be lost.
-    const decisionPromise = spec.requires_approval ? this.awaitDecision(req.request_id) : undefined;
-    await this.emit('permission_requested', SECURITY, permission);
 
-    let approval: AuditRecord['approval_status'] = 'not_required';
     let decision: PermissionDecision | undefined;
-
-    if (decisionPromise) {
-      this.setFace('WAITING_FOR_PERMISSION');
-      await this.say(`${req.tool.replace(/_/g, ' ')} requires ${spec.risk.toLowerCase()} risk authorization. Waiting for Security.`);
-      decision = await decisionPromise;
-      if (!decision) {
-        approval = 'timeout';
-        const r = rejected(req, startedAt, 'No authorization received from Security. Nothing executed.');
-        await this.say('No authorization received. I did not execute the operation.');
-        await this.finish(req, r, isValidation, { risk: spec.risk, approval_required: true, approval_status: approval });
-        this.setFace('ERROR');
-        return r;
+    if (spec.requires_approval) {
+      this.hub.setState('WAITING_FOR_PERMISSION', req.tool_id);
+      if (!this.hub.isOnline('security')) {
+        const r = rejected(req, started_at, 'Security agent is offline. I cannot obtain authorization, so nothing was executed.', this.o.stub);
+        this.hub.say('architect', 'Security is offline. I cannot get authorization for this operation, so I will not run it.', 'security_offline');
+        return this.finish(req, r, { risk: spec.risk, approval_required: true, approval_status: 'PENDING' });
       }
-      if (!decision.granted) {
-        approval = 'denied';
-        const r: ToolResult = { ...rejected(req, startedAt, `Denied by ${decision.decided_by}${decision.reason ? `: ${decision.reason}` : ''}.`), status: 'denied' };
-        await this.say('Authorization denied. Operation cancelled.');
-        await this.finish(req, r, isValidation, { risk: spec.risk, approval_required: true, approval_status: approval, user_authorization: decision.user_authorization });
-        this.setFace('IDLE');
-        return r;
+      this.hub.say('security', `Security, I need authorization: ${spec.description}`, 'permission_request');
+      let answer;
+      try {
+        answer = await this.hub.request('permission_requested', permission, {
+          to: 'security',
+          expect: ['permission_granted', 'permission_denied', 'permission_cancelled'],
+          correlation_id: permission_id,
+          timeoutMs: this.o.permissionTimeoutMs ?? 120_000,
+        });
+      } catch (err) {
+        const why = err instanceof AgentUnavailableError ? 'Security went offline before answering' : err instanceof RequestTimeoutError ? 'No authorization arrived in time' : (err as Error).message;
+        const r = rejected(req, started_at, `${why}. Nothing executed.`, this.o.stub);
+        this.hub.say('architect', `${why}. I did not execute ${req.tool_id}.`, 'permission_timeout');
+        this.hub.setState('ERROR', 'no authorization');
+        return this.finish(req, r, { risk: spec.risk, approval_required: true, approval_status: 'PENDING' });
       }
-      approval = 'granted';
-      await this.say('Authorization received.');
+      decision = answer.payload;
+      if (answer.type !== 'permission_granted') {
+        const r: ToolResult = { ...rejected(req, started_at, `Authorization ${decision.status.toLowerCase()} by ${decision.decided_by}. Nothing executed.`, this.o.stub), status: 'denied' };
+        this.hub.say('architect', decision.status === 'CANCELLED' ? 'Operation cancelled. Nothing was executed.' : 'Authorization denied. Nothing was executed.', 'permission_denied');
+        this.hub.setState('IDLE');
+        return this.finish(req, r, { risk: decision.risk, approval_required: true, approval_status: decision.status, human_raw: decision.human_raw, permission_id });
+      }
+      this.hub.say('architect', 'Authorization received. Starting the sandbox.', 'authorized');
+    } else {
+      this.hub.emit('permission_requested', permission, { to: 'security', correlation_id: permission_id });
     }
 
-    // ─ execute ─
-    this.setFace('EXECUTING');
-    await this.emit('tool_started', 'broadcast', { request_id: req.request_id, tool: req.tool, args: req.args, risk: spec.risk });
-    if (req.tool === 'sandbox_create') await this.say('Starting sandbox.');
-    else if (spec.requires_approval === false && req.tool !== 'sandbox_status') await this.say(`Running ${req.tool.replace(/_/g, ' ')}.`);
+    // Execute — fixed argv through the allowlisted executor. Claude never gets a shell.
+    this.hub.setState('EXECUTING', req.tool_id);
+    this.hub.emit('tool_started', { tool_id: req.tool_id, request_id: req.request_id, permission_id }, { correlation_id: req.request_id });
+    const exec = await this.executor.execute({ request_id: req.request_id, tool: req.tool_id, args: req.input ?? {} });
+    if (exec.command.length) this.hub.emit('sandbox_test', { request_id: req.request_id, command: exec.command.join(' ') }, { correlation_id: req.request_id });
+    const result = toToolResult(exec, { permission_id, stub: this.o.stub });
 
-    const result = await this.executor.execute({ request_id: req.request_id, tool: req.tool, args: req.args });
+    const lab = await labState(this.o.driver);
+    this.dockerAvailable = lab.docker_available;
+    if (req.tool_id === 'docker_sandbox' && result.status === 'success') this.hub.emit('sandbox_started', toSandboxState(lab, result));
+    else if (exec.command.length) this.hub.emit('sandbox_result', result, { correlation_id: req.request_id });
+    this.hub.emit('sandbox_state', toSandboxState(lab, exec.command.length ? result : undefined));
 
-    if (req.tool === 'sandbox_create' && result.status === 'success') {
-      await this.emit('sandbox_started', 'broadcast', { request_id: req.request_id, ...result.data });
-    } else if (req.tool.startsWith('sandbox_') && result.command.length) {
-      await this.emit('sandbox_test', 'broadcast', { request_id: req.request_id, tool: req.tool, command: result.command });
-      await this.emit('sandbox_result', 'broadcast', { request_id: req.request_id, tool: req.tool, status: result.status, summary: result.summary, data: result.data });
-    }
-
-    await this.say(result.summary);
-    await this.finish(req, result, isValidation, {
-      risk: spec.risk, approval_required: spec.requires_approval, approval_status: approval, user_authorization: decision?.user_authorization,
-    });
-
-    this.setFace(result.status === 'success' ? 'SUCCESS' : result.status === 'unavailable' ? 'OFFLINE' : 'ERROR');
-    setTimeout(() => this.setFace(this.face === 'OFFLINE' ? 'OFFLINE' : 'IDLE'), 4000);
-    return result;
+    if (req.tool_id !== 'sandbox_status') this.hub.say('architect', `${result.summary}${this.o.stub ? ' [stub]' : ''}`, 'tool_result');
+    this.hub.setState(result.status === 'success' ? 'SUCCESS' : result.status === 'unavailable' ? 'ERROR' : 'WARNING', `${req.tool_id}: ${result.status}`);
+    return this.finish(req, result, { risk: spec.risk, approval_required: spec.requires_approval, approval_status: decision?.status ?? (spec.requires_approval ? 'PENDING' : undefined), human_raw: decision?.human_raw, permission_id });
   }
 
-  private awaitDecision(request_id: string): Promise<PermissionDecision | undefined> {
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => { this.pending.delete(request_id); resolve(undefined); }, this.o.permissionTimeoutMs ?? 120_000);
-      this.pending.set(request_id, { resolve, timer });
-    });
-  }
+  // ------------------------------------------------------------------ report + audit
 
-  private async finish(
-    req: ToolRequest,
-    result: ToolResult,
-    isValidation: boolean,
-    a: { risk: AuditRecord['risk_level']; approval_required: boolean; approval_status: AuditRecord['approval_status']; user_authorization?: string },
-  ) {
-    this.o.onResult?.(result);
-    await this.emit('tool_finished', 'broadcast', result);
-    if (isValidation) {
-      await this.emit('validation_result', req.requested_by ?? ARCHITECT, {
-        request_id: req.request_id,
-        tool: req.tool,
-        validated: result.status === 'success',
-        status: result.status,
-        summary: result.summary,
-        evidence: { command: result.command, exit_code: result.exit_code, data: result.data },
-      });
-    }
-    const audit: AuditRecord = {
-      timestamp: result.finished_at,
-      agent: OPERATOR,
-      action: req.tool,
-      tool: result.command[0] ?? req.tool,
+  private finish(req: ToolRequest, result: ToolResult, a: { risk: RiskLevel; approval_required: boolean; approval_status?: AuditEntry['approval_status']; human_raw?: string; permission_id?: string }): ToolResult {
+    this.hub.emit('tool_finished', result, { correlation_id: req.request_id });
+    this.hub.audit({
+      action: req.tool_id,
+      tool: result.command?.[0] ?? req.tool_id,
       reason: req.reason,
-      input: result.args,
-      result: { status: result.status, summary: result.summary, exit_code: result.exit_code, command: result.command, data: result.data },
-      status: result.status,
+      input: { ...(result.input ?? req.input), requested_by: req.requested_by },
+      result: { status: result.status, summary: result.summary, exit_code: result.exit_code, command: result.command },
+      status: auditStatus(result.status),
       risk_level: a.risk,
       approval_required: a.approval_required,
       approval_status: a.approval_status,
-      user_authorization: a.user_authorization,
-    };
-    await this.emit('audit_event', 'broadcast', audit);
-    this.o.onSandboxState?.(await sandboxState(this.o.driver));
-  }
-
-  // ─── helpers ────────────────────────────────────────────────────────────────
-
-  private setFace(s: OperatorFaceState) {
-    if (s === this.face) return;
-    this.face = s;
-    this.o.onFaceState?.(s);
-    void this.emit('agent_state', 'broadcast', { agent: OPERATOR, state: s });
-  }
-
-  private async say(text: string) {
-    await this.emit('agent_message', 'broadcast', { from: OPERATOR, to: ARCHITECT, message: text, spoken: true });
-    await this.o.speaker.speak(OPERATOR, text);
-  }
-
-  private async warn(message: string) {
-    console.warn(`🟠 WARNING: ${message}`);
-    await this.emit('warning', 'broadcast', { agent: OPERATOR, message });
-  }
-
-  private emit<T>(type: WaspEvent['type'], to: AgentId | 'broadcast', payload: T) {
-    return this.o.bus.publish(makeEvent(this.o.session_id, type, OPERATOR, to, payload));
+      user_authorization: a.human_raw,
+      correlation_id: a.permission_id ?? req.request_id,
+      stub: this.o.stub || undefined,
+    });
+    this.log(`${req.tool_id} → ${result.status}: ${result.summary ?? ''}`);
+    return result;
   }
 }
 
-function normalise(p: unknown, from: AgentId): ToolRequest {
-  const x = (p ?? {}) as Partial<ToolRequest> & { operation?: string; params?: Record<string, unknown> };
-  return {
-    request_id: x.request_id ?? randomUUID(),
-    tool: x.tool ?? x.operation ?? '',
-    args: x.args ?? x.params ?? {},
-    reason: x.reason ?? '',
-    requested_by: x.requested_by ?? from,
-  };
+function rejected(req: ToolRequest, started_at: string, summary: string, stub?: boolean): ToolResult {
+  const finished_at = new Date().toISOString();
+  return { tool_id: req.tool_id, request_id: req.request_id, status: 'rejected', error: summary, summary, command: [], exit_code: null, input: req.input, started_at, finished_at, duration_ms: Math.max(0, Date.parse(finished_at) - Date.parse(started_at)), stub: stub || undefined };
 }
 
-function rejected(req: ToolRequest, started_at: string, summary: string): ToolResult {
-  return {
-    request_id: req.request_id, tool: req.tool, args: req.args, status: 'rejected',
-    started_at, finished_at: new Date().toISOString(), command: [], exit_code: null, stdout: '', stderr: '', summary, data: {},
-  };
+function auditStatus(s: ToolResult['status']): AuditEntry['status'] {
+  switch (s) {
+    case 'success':
+      return 'success';
+    case 'unavailable':
+      return 'unavailable';
+    case 'denied':
+    case 'rejected':
+      return 'denied';
+    default:
+      return 'failure';
+  }
 }
+
+export type { ToolSpec };
