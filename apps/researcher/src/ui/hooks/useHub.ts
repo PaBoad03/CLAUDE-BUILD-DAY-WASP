@@ -25,6 +25,8 @@ export interface HubView {
   faceDetail: string;
   /** Whether the agent PROCESS (not this UI) is connected. */
   agentProcessOnline: boolean;
+  /** Whether the real CYAN architect process is online (hides the dev SIMULATE button). */
+  architectOnline: boolean;
   research: MagentaResearchSummary | null;
   messages: WaspEvent<"agent_message">[];
   /** Latest line MAGENTA should speak on this PC. */
@@ -101,6 +103,7 @@ export function useHub(): HubView {
     return Boolean(me && me.status === "online" && (me.meta as { role?: string } | undefined)?.role !== "ui");
   }, [context]);
 
+  const architectOnline = context?.agents?.architect?.status === "online";
   const faceState: FaceState = status !== "open" ? "OFFLINE" : (context?.agent_states?.researcher ?? "OFFLINE");
 
   const emitTts: HubView["emitTts"] = (kind, text, ok = true) => {
@@ -128,5 +131,5 @@ export function useHub(): HubView {
     return request_id;
   };
 
-  return { status, sessionId, context, events, faceState, faceDetail, agentProcessOnline, research, messages, lastSpeech, emitTts, simulateArchitectRequest };
+  return { status, sessionId, context, events, faceState, faceDetail, agentProcessOnline, architectOnline, research, messages, lastSpeech, emitTts, simulateArchitectRequest };
 }

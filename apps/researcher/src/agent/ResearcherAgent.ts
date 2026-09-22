@@ -14,6 +14,13 @@ import type { ResearchEngine } from "../research/ResearchEngine";
 /** The slice of HubClient the agent needs. Tests pass a fake; production passes the real client. */
 export type HubLike = Pick<HubClient, "agent" | "onMine" | "emit" | "say" | "setState" | "audit">;
 
+/** First sentence of the summary, plus the FOUND ≠ VERIFIED reminder when nothing was verified. */
+export function spokenLine(summary: string, verified: number): string {
+  const first = summary.split(/(?<=[.!?])\s+/)[0]?.trim() || summary.trim();
+  if (verified > 0) return first;
+  return /not (experimentally )?validated|no verificad/i.test(first) ? first : `${first} Documented, but not experimentally validated.`;
+}
+
 export interface ResearcherAgentOptions {
   hub: HubLike;
   engine: ResearchEngine;
@@ -90,8 +97,9 @@ export class ResearcherAgent {
       this.hub.emit("research_result", summary, { to: replyTo, correlation_id });
 
       this.setState("SENDING", `reporting to ${replyTo}`);
-      // The spoken/visible line. Details stay on screen; the voice line is short.
-      this.hub.say(replyTo, summary.summary, "research_complete", {
+      // The spoken/visible line. Details stay on screen; the voice line is ONE sentence (docs/CORRECCIONES.md M4).
+      // The full summary still travels in research_result.summary.
+      this.hub.say(replyTo, spokenLine(summary.summary, summary.counts.VERIFIED), "research_complete", {
         request_id: req.request_id,
         counts: summary.counts,
         mode: summary.mode,

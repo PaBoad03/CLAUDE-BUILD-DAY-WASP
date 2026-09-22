@@ -1,4 +1,4 @@
-import { AGENTS, type FaceState, type WaspEvent } from "@wasp/shared-types";
+import type { FaceState } from "@wasp/shared-types";
 import type { MagentaResearchResult, MagentaResearchSummary } from "../../research/types";
 import { FloatingWindow } from "./FloatingWindow";
 
@@ -80,25 +80,5 @@ export function VerificationWindow({ research }: { research: MagentaResearchSumm
   );
 }
 
-export function CommunicationWindow({ messages }: { messages: WaspEvent<"agent_message">[] }) {
-  const recent = messages.slice(-6);
-  return (
-    <FloatingWindow title="AGENT COMMUNICATION">
-      {recent.length === 0 && <p className="muted">Waiting for the architect...</p>}
-      <ul className="chat">
-        {recent.map((m) => {
-          const color = AGENTS[m.from as keyof typeof AGENTS]?.hex ?? "#e5e7eb";
-          return (
-            <li key={m.id} className="chat__item">
-              <span className="chat__route" style={{ color }}>
-                {m.from.toUpperCase()} → {m.to.toUpperCase()}
-                {m.payload.intent ? ` · ${m.payload.intent}` : ""}
-              </span>
-              <span className="chat__text">“{m.payload.message}”</span>
-            </li>
-          );
-        })}
-      </ul>
-    </FloatingWindow>
-  );
-}
+// The conversation window is shared by every face (docs/CORRECCIONES.md M2).
+export { CommunicationWindow } from "@wasp/ui";

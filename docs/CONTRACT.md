@@ -150,6 +150,11 @@ A `validation_request` without `tools` makes ORANGE run `docker_sandbox → sand
 - `PermissionStatus` gains `BLOCKED`; `PermissionDecision.rationale?`. GREEN emits `permission_denied { status: 'BLOCKED' }` for CRITICAL and `permission_cancelled { status: 'EXPIRED' }` on timeout.
 - UI sockets (`meta.role = 'ui'`) no longer affect presence (§2). `@wasp/event-bus/testing` exports `FakeHub` for every agent's unit tests.
 
+**v1.1.1 — 2026-09-22 (voice + faces).** No payload changes. Conventions:
+- The voice layer is `@wasp/voice` (browser): `VoiceOutput` speaks this PC's `agent_message` / `speak_requested` and reports `tts_started` / `tts_finished`; `VoiceInput` (mic) emits `stt_transcript { text, final }` to `architect`. Only the CYAN face has a mic; GREEN interprets the words, the voice layer never authorizes.
+- `npm run architect` without a request waits for the first `stt_transcript { final: true }` or human `user_message` and uses it as the request. Human answers to `permission_required` arrive the same way.
+- Faces use `useHub(agent)` from `@wasp/ui` (viewer socket, `meta.role = 'ui'`) and `postAsHuman()` for buttons / typed text (`POST /events`, `from: 'human'`).
+
 ## 10. Adding something to the contract
 
 1. Add the type in `packages/shared-types/src/*.ts` and, if it is an event, to `EventPayloads` + `EVENT_TYPES` in `events.ts`.

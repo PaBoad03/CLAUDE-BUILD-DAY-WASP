@@ -2,6 +2,8 @@
  * CYAN — Architect / Orchestrator (CLI entrypoint).
  *
  *   npm run architect -- "WASP, create a two-hour beginner network reconnaissance workshop."
+ *   npm run architect                 # no request: WASP listens (mic / typed text on the CYAN face, or stdin)
+ *   npm run architect:ui              # the CYAN face on http://localhost:5173
  *
  * With Claude credentials (ANTHROPIC_API_KEY or `ant auth login`) Claude drives the orchestration
  * through structured tool calls (./orchestrator.ts). Without them — or with --deterministic /
@@ -20,11 +22,22 @@ import { ClaudeOrchestrator, DEFAULT_MODEL, hasClaudeCredentials, type Effort } 
 
 const argv = process.argv.slice(2);
 const deterministicFlag = argv.includes('--deterministic');
-const request = argv.filter((a) => !a.startsWith('--')).join(' ') || 'WASP, create a two-hour beginner network reconnaissance workshop.';
+const argRequest = argv.filter((a) => !a.startsWith('--')).join(' ');
 const log = (m: string) => console.log(`[cyan ${new Date().toISOString().slice(11, 19)}] ${m}`);
 
 const hub = await connectHub({ agent: 'architect', mode: 'real', meta: { host: 'pablo', engine: 'pending' }, log });
 const human = new CliHuman({ hub, autoAnswer: process.env.WASP_AUTO_ANSWER, log });
+
+// No request on the command line: WASP listens. The first thing the human says (mic on the CYAN face →
+// stt_transcript), types (CYAN face → user_message) or enters on stdin becomes the request.
+let request = argRequest;
+if (!request) {
+  hub.setState('LISTENING', 'waiting for the human');
+  const listener = new CliHuman({ hub, autoAnswer: process.env.WASP_AUTO_REQUEST, log });
+  request = (await listener.ask('WASP is listening. What do you need?')).trim() || 'WASP, create a two-hour beginner network reconnaissance workshop.';
+  listener.close();
+  log(`request: ${request}`);
+}
 
 hub.onAny((e) => {
   if (e.type === 'agent_message' && e.from !== 'architect') console.log(`  ${e.from.toUpperCase()} → ${String(e.to).toUpperCase()}: ${e.payload.message}`);

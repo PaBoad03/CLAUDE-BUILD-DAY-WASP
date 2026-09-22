@@ -45,8 +45,11 @@ export function App() {
   const detail =
     hub.status !== "open" ? "no hub connection" : !hub.agentProcessOnline ? "agent process not connected — run: npm run agent -w @wasp/researcher" : hub.faceDetail;
 
+  // M1: the dev button only makes sense when the real CYAN is not driving (or behind ?dev=1).
+  const showSimulate = !hub.architectOnline || new URLSearchParams(location.search).get("dev") === "1";
+
   return (
-    <main className="screen">
+    <main className="screen theme-magenta">
       <div className="crt" aria-hidden="true" />
       <header className="topbar">
         <span className="topbar__brand">WASP</span>
@@ -57,9 +60,11 @@ export function App() {
         <button className="btn" onClick={toggleVoice} disabled={!voice.isSupported}>
           {voice.isSupported ? (voiceOn ? "VOICE ON" : "ENABLE VOICE") : "NO TTS"}
         </button>
-        <button className="btn btn--ghost" onClick={simulate} title="DEV ONLY: inject a CYAN research_request through the hub HTTP API">
-          SIMULATE CYAN REQUEST
-        </button>
+        {showSimulate && (
+          <button className="btn btn--ghost" onClick={simulate} title="DEV ONLY: inject a CYAN research_request through the hub HTTP API (hidden while the real CYAN is online)">
+            SIMULATE CYAN REQUEST
+          </button>
+        )}
       </header>
       {devError && <p className="degraded">dev button failed: {devError}</p>}
 
