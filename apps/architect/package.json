@@ -3,9 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "CYAN — Architect / Orchestrator agent. Owner: Pablo.",
+  "description": "CYAN — Architect / Orchestrator agent: Claude API tool loop over the WASP hub. Owner: Pablo.",
   "main": "./src/index.ts",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
     "@wasp/event-bus": "*",
     "@wasp/shared-types": "*"
   }
