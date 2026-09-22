@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wasp.local/schemas/audit-entry.schema.json",
+  "title": "AuditEntry",
+  "description": "WHO / WHAT / WHY / WHEN / WITH WHICH TOOL / AUTHORIZATION REQUIRED? / GRANTED? / WHAT HAPPENED",
+  "type": "object",
+  "required": ["id", "timestamp", "agent", "action", "status", "approval_required"],
+  "properties": {
+    "id": { "type": "string" },
+    "timestamp": { "type": "string" },
+    "agent": { "type": "string" },
+    "action": { "type": "string" },
+    "tool": { "type": "string" },
+    "reason": { "type": "string" },
+    "input": { "type": "object" },
+    "result": {},
+    "status": { "type": "string", "enum": ["success", "failure", "denied", "cancelled", "unavailable", "info"] },
+    "risk_level": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+    "approval_required": { "type": "boolean" },
+    "approval_status": { "type": "string" },
+    "user_authorization": { "type": "string" },
+    "correlation_id": { "type": "string" },
+    "stub": { "type": "boolean" }
+  }
+}

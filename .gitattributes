@@ -1,0 +1,7 @@
+# One line-ending policy for four Windows machines. Avoids whole-file diffs.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.mp3 binary
+*.wav binary

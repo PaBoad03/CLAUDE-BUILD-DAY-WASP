@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wasp.local/schemas/wasp-event.schema.json",
+  "title": "WaspEvent",
+  "description": "Envelope for every message on the WASP event bus. Mirrors packages/shared-types/src/events.ts.",
+  "type": "object",
+  "required": ["id", "type", "session_id", "from", "to", "timestamp", "payload"],
+  "properties": {
+    "id": { "type": "string" },
+    "type": {
+      "type": "string",
+      "enum": [
+        "session_started", "session_completed", "session_snapshot",
+        "agent_registered", "agent_started", "agent_finished", "agent_offline", "agent_state",
+        "context_updated", "hub_error",
+        "user_message", "user_authorization", "final_response",
+        "agent_message",
+        "research_request", "research_started", "research_result",
+        "validation_request", "validation_result",
+        "tools_registered", "tool_requested", "tool_started", "tool_finished",
+        "sandbox_started", "sandbox_test", "sandbox_result", "sandbox_state",
+        "permission_requested", "permission_required", "permission_granted", "permission_denied", "permission_cancelled", "permission_clarification_needed",
+        "speak_requested", "tts_started", "tts_finished", "stt_transcript",
+        "workshop_updated", "decision_made", "session_state",
+        "audit_event", "warning", "error"
+      ]
+    },
+    "session_id": { "type": "string" },
+    "from": { "$ref": "#/$defs/participant" },
+    "to": { "$ref": "#/$defs/participant" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "payload": {},
+    "correlation_id": { "type": "string" }
+  },
+  "$defs": {
+    "participant": {
+      "type": "string",
+      "enum": ["architect", "researcher", "operator", "security", "hub", "human", "all"]
+    }
+  }
+}

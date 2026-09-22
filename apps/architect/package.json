@@ -1,0 +1,12 @@
+{
+  "name": "@wasp/architect",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CYAN — Architect / Orchestrator agent. Owner: Pablo.",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@wasp/event-bus": "*",
+    "@wasp/shared-types": "*"
+  }
+}

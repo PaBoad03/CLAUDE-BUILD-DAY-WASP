@@ -1,0 +1,27 @@
+# WASP ownership boundaries. These are boundaries, NOT separate projects.
+# Rule: only write inside your own folder. If you need something in a shared
+# package, ask its owner (or open a small PR against it) — do not edit it silently.
+
+# --- Shared contract & backbone (Pablo / CYAN) ---
+/packages/shared-types/   @PaBoad03
+/packages/event-bus/      @PaBoad03
+/schemas/                 @PaBoad03
+/apps/hub/                @PaBoad03
+/apps/architect/          @PaBoad03
+/docs/CONTRACT.md         @PaBoad03
+/docs/GIT-RULES.md        @PaBoad03
+/package.json             @PaBoad03
+/tsconfig*.json           @PaBoad03
+
+# --- Andrea / MAGENTA: research, voice experience, visual polish ---
+/apps/researcher/         # Andrea
+/packages/voice/          # Andrea
+/packages/ui/             # Andrea (shared face component, parameterized by color)
+
+# --- Felipe / ORANGE: docker, sandbox, tools ---
+/apps/operator/           # Felipe
+/docker/                  # Felipe
+
+# --- Juanda / GREEN: permissions, audit, adversarial tests ---
+/apps/security/           # Juanda
+/packages/permissions/    # Juanda

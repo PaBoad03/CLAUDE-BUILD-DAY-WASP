@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wasp.local/schemas/workshop.schema.json",
+  "title": "WorkshopSpec",
+  "type": "object",
+  "required": ["title", "level", "duration_minutes", "objectives", "agenda", "concepts", "challenges", "tools", "prerequisites", "network_dependencies", "risks", "fallbacks", "research", "lab"],
+  "properties": {
+    "title": { "type": "string" },
+    "level": { "type": "string", "enum": ["beginner", "intermediate", "advanced", ""] },
+    "duration_minutes": { "type": "integer", "minimum": 0 },
+    "objectives": { "type": "array", "items": { "type": "string" } },
+    "agenda": { "type": "array", "items": { "type": "object", "required": ["title", "minutes"], "properties": { "title": { "type": "string" }, "minutes": { "type": "integer" }, "description": { "type": "string" } } } },
+    "concepts": { "type": "array", "items": { "type": "string" } },
+    "challenges": { "type": "array", "items": { "type": "object", "required": ["title", "description"], "properties": { "title": { "type": "string" }, "description": { "type": "string" }, "tools": { "type": "array", "items": { "type": "string" } } } } },
+    "tools": { "type": "array", "items": { "type": "string" } },
+    "prerequisites": { "type": "array", "items": { "type": "string" } },
+    "network_dependencies": { "type": "array", "items": { "type": "string" } },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "fallbacks": { "type": "array", "items": { "type": "string" } },
+    "research": { "type": "array", "items": { "$ref": "research-result.schema.json" } },
+    "lab": {
+      "type": "object",
+      "required": ["description", "validated"],
+      "properties": {
+        "description": { "type": "string" },
+        "validated": { "type": "boolean", "description": "true ONLY after a real validation step succeeded" },
+        "validation_note": { "type": "string" }
+      }
+    }
+  }
+}

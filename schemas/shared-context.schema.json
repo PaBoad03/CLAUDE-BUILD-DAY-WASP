@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wasp.local/schemas/shared-context.schema.json",
+  "title": "SharedContext",
+  "description": "Authoritative state held by the WASP HUB. Mirrors packages/shared-types/src/context.ts.",
+  "type": "object",
+  "required": ["session_id", "user_request", "current_task", "current_state", "workshop", "research", "tools", "permissions", "sandbox", "agent_messages", "decisions", "audit", "agents", "agent_states", "revision"],
+  "properties": {
+    "session_id": { "type": "string" },
+    "started_at": { "type": "string" },
+    "user_request": { "type": "string" },
+    "current_task": { "type": "string" },
+    "current_state": { "type": "string", "enum": ["IDLE", "RECEIVED_REQUEST", "PLANNING", "RESEARCHING", "VALIDATING", "WAITING_FOR_PERMISSION", "EXECUTING", "SYNTHESIZING", "COMPLETED", "FAILED"] },
+    "workshop": { "$ref": "workshop.schema.json" },
+    "research": { "type": "array", "items": { "$ref": "research-result.schema.json" } },
+    "tools": { "type": "array", "items": { "type": "object" } },
+    "permissions": { "type": "array", "items": { "$ref": "permission.schema.json#/$defs/record" } },
+    "sandbox": { "type": "object" },
+    "agent_messages": { "type": "array", "items": { "type": "object" } },
+    "decisions": { "type": "array", "items": { "type": "object" } },
+    "audit": { "type": "array", "items": { "$ref": "audit-entry.schema.json" } },
+    "agents": { "type": "object" },
+    "agent_states": { "type": "object" },
+    "final_response": { "type": "string" },
+    "revision": { "type": "integer" }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wasp.local/schemas/research-result.schema.json",
+  "title": "ResearchResult",
+  "type": "object",
+  "required": ["id", "source", "title", "claim", "verification_status", "confidence"],
+  "properties": {
+    "id": { "type": "string" },
+    "source": { "type": "string" },
+    "title": { "type": "string" },
+    "kind": { "type": "string", "enum": ["official", "academic", "technical_reference", "community", "unknown"] },
+    "claim": { "type": "string" },
+    "procedure": { "type": "string" },
+    "verification_status": { "type": "string", "enum": ["FOUND", "VERIFIED", "CONTRADICTED", "UNKNOWN"], "description": "FOUND means documented somewhere. VERIFIED means WASP actually executed it successfully." },
+    "evidence": { "type": "string" },
+    "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+    "stub": { "type": "boolean" }
+  }
+}

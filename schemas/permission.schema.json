@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wasp.local/schemas/permission.schema.json",
+  "title": "Permission shapes",
+  "$defs": {
+    "risk": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+    "status": { "type": "string", "enum": ["PENDING", "AUTO_APPROVED", "AWAITING_HUMAN", "GRANTED", "DENIED", "CANCELLED", "EXPIRED"] },
+    "request": {
+      "type": "object",
+      "required": ["permission_id", "requested_by", "operation", "reason"],
+      "properties": {
+        "permission_id": { "type": "string" },
+        "requested_by": { "type": "string", "enum": ["architect", "researcher", "operator", "security"] },
+        "operation": { "type": "string" },
+        "reason": { "type": "string" },
+        "proposed_risk": { "$ref": "#/$defs/risk" },
+        "input": { "type": "object" }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "required": ["permission_id", "operation", "risk", "approval_required", "human_prompt"],
+      "properties": {
+        "permission_id": { "type": "string" },
+        "operation": { "type": "string" },
+        "risk": { "$ref": "#/$defs/risk" },
+        "approval_required": { "type": "boolean" },
+        "human_prompt": { "type": "string" },
+        "rationale": { "type": "string" }
+      }
+    },
+    "human_authorization": {
+      "type": "object",
+      "required": ["permission_id", "decision", "raw", "channel"],
+      "properties": {
+        "permission_id": { "type": "string" },
+        "decision": { "type": "string", "enum": ["YES", "NO", "STOP", "AMBIGUOUS"] },
+        "raw": { "type": "string" },
+        "channel": { "type": "string" }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": ["permission_id", "operation", "requested_by", "status", "risk", "approval_required", "decided_by", "decided_at"],
+      "properties": {
+        "permission_id": { "type": "string" },
+        "operation": { "type": "string" },
+        "requested_by": { "type": "string" },
+        "status": { "$ref": "#/$defs/status" },
+        "risk": { "$ref": "#/$defs/risk" },
+        "approval_required": { "type": "boolean" },
+        "decided_by": { "type": "string", "enum": ["security", "human"] },
+        "human_raw": { "type": "string" },
+        "decided_at": { "type": "string" }
+      }
+    },
+    "record": {
+      "allOf": [{ "$ref": "#/$defs/request" }],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "risk": { "$ref": "#/$defs/risk" },
+        "approval_required": { "type": "boolean" },
+        "human_prompt": { "type": "string" },
+        "decided_by": { "type": "string" },
+        "human_raw": { "type": "string" },
+        "requested_at": { "type": "string" },
+        "decided_at": { "type": "string" }
+      }
+    }
+  }
+}

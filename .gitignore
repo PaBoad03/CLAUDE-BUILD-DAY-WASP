@@ -1,0 +1,26 @@
+# deps
+node_modules/
+
+# secrets — NEVER commit real keys. Use .env.example as template.
+.env
+.env.*
+!.env.example
+
+# build / cache
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# runtime
+*.log
+audit/*.jsonl
+tmp/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+tmp-*.log
+tmp-*.err

@@ -1,0 +1,30 @@
+{
+  "name": "wasp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "WASP — multi-agent AI operations system. Four agents, one hub, one context.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "hub": "tsx apps/hub/src/index.ts",
+    "stubs": "tsx apps/hub/src/stubs.ts",
+    "architect": "tsx apps/architect/src/index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test \"apps/**/*.test.ts\" \"packages/**/*.test.ts\""
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

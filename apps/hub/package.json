@@ -1,0 +1,12 @@
+{
+  "name": "@wasp/hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "WASP HUB — authoritative shared context + event broadcast. Runs on Pablo's PC. Owner: Pablo/CYAN.",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@wasp/shared-types": "*",
+    "ws": "^8.18.0"
+  }
+}
