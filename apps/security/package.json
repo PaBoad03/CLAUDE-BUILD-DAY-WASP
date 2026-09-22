@@ -1,0 +1,16 @@
+{
+  "name": "@wasp/app-security",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "GREEN agent app: security face UI + standalone demo runner. Owner: Juanda.",
+  "scripts": {
+    "demo": "node --experimental-strip-types src/demo.ts",
+    "ui": "node --experimental-strip-types src/serve-ui.ts"
+  },
+  "dependencies": {
+    "@wasp/audit": "*",
+    "@wasp/permissions": "*",
+    "@wasp/shared-types": "*"
+  }
+}
