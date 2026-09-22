@@ -14,7 +14,7 @@ import { resolveHubUrl } from '@wasp/event-bus';
 const here = dirname(fileURLToPath(import.meta.url));
 
 export function startUiServer(port: number, hubUrl: string): () => void {
-  const html = readFileSync(join(here, '..', 'ui', 'index.html'), 'utf8').replace('__WASP_HUB_URL__', hubUrl);
+  const html = readFileSync(join(here, '..', 'ui', 'index.html'), 'utf8').replaceAll('__WASP_HUB_URL__', hubUrl);
   const server = createServer((req, res) => {
     if (req.url === '/' || req.url?.startsWith('/?') || req.url?.startsWith('/index.html')) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });

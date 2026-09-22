@@ -11,7 +11,7 @@ const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../ui');
  * no per-agent relay: one hub, one stream, four faces.
  */
 export function startUiServer(port: number, hubUrl: string): () => void {
-  const html = readFileSync(resolve(UI_DIR, 'index.html'), 'utf8').replace('__WASP_HUB_URL__', hubUrl);
+  const html = readFileSync(resolve(UI_DIR, 'index.html'), 'utf8').replaceAll('__WASP_HUB_URL__', hubUrl);
   const server = createServer((req, res) => {
     if (req.url === '/' || req.url?.startsWith('/index.html') || req.url?.startsWith('/?')) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
