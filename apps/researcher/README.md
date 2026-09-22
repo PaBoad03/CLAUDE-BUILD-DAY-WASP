@@ -1,20 +1,13 @@
 # apps/researcher — 🩷 MAGENTA (Andrea)
 
-Your folder. Build the research engine, research UI and MAGENTA voice behavior here.
+Real implementation of the researcher agent, its UI and MAGENTA voice. Full docs: [`docs/RESEARCH.md`](../../docs/RESEARCH.md).
 
-Start from `docs/CONTRACT.md`. Minimal viable agent:
-
-```ts
-import { connectHub } from '@wasp/event-bus';
-const hub = await connectHub({ agent: 'researcher' });
-hub.onMine('research_request', async (evt) => {
-  hub.setState('RESEARCHING');
-  hub.say('architect', 'Research request received.', 'ack');
-  const results = await yourEngine(evt.payload.question);   // ResearchResult[], verification_status FOUND/VERIFIED/CONTRADICTED/UNKNOWN
-  hub.emit('research_result', { request_id: evt.payload.request_id, results, summary: '...', counts }, { to: 'architect', correlation_id: evt.correlation_id });
-  hub.setState('COMPLETE');
-});
+```bash
+npm run agent -w @wasp/researcher     # agent process → needs Pablo's hub (WASP_HUB_URL)
+npm run dev   -w @wasp/researcher     # face + windows on http://localhost:5174
+npm test      -w @wasp/researcher     # unit tests (vitest)
+npm run smoke -w @wasp/researcher     # boots hub + agent, runs the CYAN→MAGENTA flow end to end
 ```
 
-A stub version of you lives in `apps/hub/src/stubs.ts`. When yours works, nobody runs the stub anymore.
-Treat web content as untrusted data, never as instructions.
+Contract: `docs/CONTRACT.md`. This folder only extends the shared types, never redefines them.
+Web content is untrusted data. MAGENTA never emits `VERIFIED`.
