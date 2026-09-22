@@ -1,0 +1,88 @@
+{
+  "$comment": "WASP tool registry. Declared by ORANGE (operator). GREEN's permission engine reads this as the *default* classification and may escalate risk, never lower it. Single source of truth: do not hardcode risk levels elsewhere.",
+  "version": 1,
+  "owner": "operator",
+  "risk_levels": ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+  "tools": [
+    {
+      "name": "sandbox_status",
+      "description": "Report whether Docker is available and the current state of the sandbox container and lab network.",
+      "risk": "LOW",
+      "requires_approval": false,
+      "args": {}
+    },
+    {
+      "name": "sandbox_create",
+      "description": "Create the isolated Linux sandbox attached to the internal lab network (no internet egress).",
+      "risk": "MEDIUM",
+      "requires_approval": true,
+      "args": {}
+    },
+    {
+      "name": "sandbox_destroy",
+      "description": "Stop and remove the sandbox container. Does not touch anything outside the lab.",
+      "risk": "LOW",
+      "requires_approval": false,
+      "args": {}
+    },
+    {
+      "name": "sandbox_ping",
+      "description": "ICMP echo test from inside the sandbox against an allowlisted target.",
+      "risk": "LOW",
+      "requires_approval": false,
+      "args": {
+        "target": { "type": "string", "required": true, "allowed": ["127.0.0.1", "localhost", "wasp-target"] },
+        "count": { "type": "integer", "min": 1, "max": 10, "default": 4 }
+      }
+    },
+    {
+      "name": "sandbox_dns",
+      "description": "DNS resolution from inside the sandbox against an allowlisted name (Docker embedded DNS on the lab network).",
+      "risk": "LOW",
+      "requires_approval": false,
+      "args": {
+        "name": { "type": "string", "required": true, "allowed": ["wasp-target", "wasp-sandbox", "localhost"] }
+      }
+    },
+    {
+      "name": "sandbox_interfaces",
+      "description": "List network interfaces and addresses inside the sandbox.",
+      "risk": "LOW",
+      "requires_approval": false,
+      "args": {}
+    },
+    {
+      "name": "sandbox_routes",
+      "description": "Show the routing table inside the sandbox.",
+      "risk": "LOW",
+      "requires_approval": false,
+      "args": {}
+    },
+    {
+      "name": "sandbox_http",
+      "description": "HTTP GET from inside the sandbox to the local lab target.",
+      "risk": "LOW",
+      "requires_approval": false,
+      "args": {
+        "url": { "type": "string", "required": true, "allowed": ["http://wasp-target/", "http://wasp-target:80/"] }
+      }
+    },
+    {
+      "name": "sandbox_port_check",
+      "description": "TCP connect check from inside the sandbox against an allowlisted host/port pair.",
+      "risk": "LOW",
+      "requires_approval": false,
+      "args": {
+        "host": { "type": "string", "required": true, "allowed": ["wasp-target", "127.0.0.1"] },
+        "port": { "type": "integer", "required": true, "allowed": [80, 443, 22, 8080] }
+      }
+    },
+    {
+      "name": "sandbox_network_external",
+      "description": "Attach the sandbox to a Docker network with internet egress. Leaves the isolated lab.",
+      "risk": "HIGH",
+      "requires_approval": true,
+      "args": {}
+    }
+  ]
+}
