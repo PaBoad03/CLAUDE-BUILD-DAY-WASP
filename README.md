@@ -19,6 +19,8 @@ Multi-agent AI operations system powered by the Claude API.
 
 ## Quick start
 
+**One PC, one command (Windows):** `.\wasp.ps1` opens every process in its own window, waits for the hub, opens the CYAN face and tells you which URL to open for each face. `.\wasp.ps1 -Stubs` for a fast rehearsal without MAGENTA/ORANGE, `-Request "..."` to skip the mic, `.\wasp.ps1 -Stop` to shut everything down.
+
 ```bash
 npm install                      # Node >= 20, npm workspaces, no pnpm needed
 cp .env.example .env             # set WASP_HUB_URL=ws://<pablo-ip>:7331 unless you are Pablo
