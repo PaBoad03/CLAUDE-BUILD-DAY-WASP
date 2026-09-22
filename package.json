@@ -9,14 +9,14 @@
     "packages/*"
   ],
   "scripts": {
-    "hub": "tsx apps/hub/src/index.ts",
-    "stubs": "tsx apps/hub/src/stubs.ts",
-    "architect": "tsx apps/architect/src/index.ts",
+    "hub": "node --env-file-if-exists=.env --import tsx apps/hub/src/index.ts",
+    "stubs": "node --env-file-if-exists=.env --import tsx apps/hub/src/stubs.ts",
+    "architect": "node --env-file-if-exists=.env --import tsx apps/architect/src/index.ts",
     "architect:ui": "npm run ui -w @wasp/architect",
     "researcher:ui": "npm run dev -w @wasp/researcher",
-    "researcher": "tsx apps/researcher/src/agent/main.ts",
-    "operator": "tsx apps/operator/src/main.ts",
-    "security": "tsx apps/security/src/main.ts",
+    "researcher": "node --env-file-if-exists=.env --import tsx apps/researcher/src/agent/main.ts",
+    "operator": "node --env-file-if-exists=.env --import tsx apps/operator/src/main.ts",
+    "security": "node --env-file-if-exists=.env --import tsx apps/security/src/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test \"apps/**/*.test.ts\" \"packages/**/*.test.ts\""
   },
