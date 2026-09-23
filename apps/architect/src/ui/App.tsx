@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AgentFace, AgentsWindow, AuditWindow, CommunicationWindow, EventLog, PermissionsWindow, ResearchStatusWindow, SandboxWindow, TaskWindow, WorkshopWindow, agentTheme, useHub } from '@wasp/ui';
+import { AgentFace3D, AgentsWindow, AuditWindow, CommunicationWindow, EventLog, PermissionsWindow, ResearchStatusWindow, SandboxWindow, TaskWindow, WorkshopWindow, agentTheme, attentionFor, useHub } from '@wasp/ui';
 import { AGENT_VOICES, VoiceInput, VoiceOutput } from '@wasp/voice';
 
 /**
@@ -59,6 +59,17 @@ export function App() {
     }
   };
 
+  const answer = async (permission: { permission_id: string }, decision: 'YES' | 'NO' | 'STOP', raw: string) => {
+    try {
+      await hub.postAsHuman('user_authorization', { permission_id: permission.permission_id, decision, raw, channel: 'ui' }, { to: 'security', correlation_id: permission.permission_id });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  // While the human is speaking, the mask listens to the camera.
+  const lookAt = listening && heard ? 'human' : attentionFor('architect', hub.messages);
+  const faceState = hub.faceState === 'IDLE' && listening ? 'LISTENING' : hub.faceState;
   const detail =
     hub.status !== 'open' ? 'no hub connection' : !hub.agentProcessOnline ? 'architect process not connected — run: npm run architect' : heard ? `hearing: “${heard}”` : hub.faceDetail;
 
@@ -82,8 +93,7 @@ export function App() {
 
       <div className="stage">
         <div className="stage__face">
-          <AgentFace color={theme.hex} state={hub.faceState} speaking={speaking} label={theme.name} />
-          <p className="stage__detail">{detail}</p>
+          <AgentFace3D color={theme.hex} state={faceState} speaking={speaking} label={theme.name} lookAt={lookAt} detail={detail} />
           <form
             className="ask"
             onSubmit={(e) => {
@@ -101,7 +111,7 @@ export function App() {
         <div className="stage__windows stage__windows--3">
           <TaskWindow context={hub.context} />
           <AgentsWindow context={hub.context} />
-          <PermissionsWindow context={hub.context} />
+          <PermissionsWindow context={hub.context} onAnswer={answer} />
           <WorkshopWindow context={hub.context} />
           <ResearchStatusWindow context={hub.context} />
           <SandboxWindow context={hub.context} />

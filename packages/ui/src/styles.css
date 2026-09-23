@@ -149,6 +149,23 @@ a { color: inherit; }
 .task { margin: 0 0 6px; font-size: 13px; color: var(--text); }
 .decisions { list-style: none; margin: 0; padding: 0; font-size: 11px; color: var(--text); display: flex; flex-direction: column; gap: 2px; }
 
+.btn--danger { color: var(--bad); border-color: var(--bad); text-shadow: 0 0 8px var(--bad); box-shadow: none; }
+.review__buttons { display: flex; gap: 6px; margin-top: 8px; }
+.review__buttons .btn { flex: 1; }
+.term { margin: 0; font-size: 11.5px; line-height: 1.4; white-space: pre-wrap; }
+.ask { display: flex; gap: 6px; width: min(100%, 420px); }
+.ask__input { flex: 1; background: transparent; color: var(--text); border: 1px solid color-mix(in srgb, var(--agent) 45%, transparent); padding: 6px 8px; font: inherit; font-size: 12px; }
+.ask__input:focus { outline: none; border-color: var(--agent); box-shadow: 0 0 10px color-mix(in srgb, var(--agent) 35%, transparent); }
+
+/* ---- 3D face ----------------------------------------------------------- */
+.face3d { position: relative; width: 100%; flex: 1; min-height: 320px; display: flex; flex-direction: column; }
+.face3d__canvas { flex: 1; min-height: 0; }
+.face3d__canvas canvas { display: block; width: 100% !important; height: 100% !important; }
+.face3d__caption { position: absolute; left: 6%; right: 6%; bottom: 8px; display: flex; justify-content: space-between; font-size: 12px; letter-spacing: .16em; color: var(--agent); text-shadow: 0 0 10px var(--agent); pointer-events: none; }
+.face3d__detail { position: absolute; left: 0; right: 0; bottom: 30px; text-align: center; font-size: 12px; letter-spacing: .08em; color: var(--muted); pointer-events: none; }
+.face3d--offline .face3d__caption { color: var(--muted); text-shadow: none; }
+.stage__face .face3d { align-self: stretch; }
+
 /* ---- face -------------------------------------------------------------- */
 .face { width: min(100%, 420px); aspect-ratio: 1; position: relative; filter: drop-shadow(0 0 22px color-mix(in srgb, var(--agent) 55%, transparent)); }
 .face__svg { width: 100%; height: 100%; }

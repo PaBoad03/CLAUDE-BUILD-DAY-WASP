@@ -28,8 +28,8 @@ cp .env.example .env             # set WASP_HUB_URL=ws://<pablo-ip>:7331 unless 
 npm run hub                      # Pablo's PC only — authoritative shared context on :7331
 npm run architect:ui             # CYAN face on :5173 — mic → WASP, TTS for CYAN's lines, every window of the shared context
 npm run researcher               # Andrea's PC  (MAGENTA agent; face: npm run researcher:ui on :5174)
-npm run operator                 # Felipe's PC  (ORANGE agent + face on :7003; --fake-docker without Docker)
-npm run security                 # Juanda's PC  (GREEN agent + face on :7004)
+npm run operator                 # Felipe's PC  (ORANGE agent; --fake-docker without Docker)   face: npm run operator:ui  (:7003)
+npm run security                 # Juanda's PC  (GREEN agent)                                    face: npm run security:ui  (:7004)
 npm run stubs -- operator security   # fake any agent that is not running, so you can test alone
 npm run architect -- "WASP, create a two-hour beginner network reconnaissance workshop."
 npm run architect                # no request: WASP listens — speak into the CYAN face (mic) or type there
@@ -56,7 +56,7 @@ packages/
   shared-types/ THE contract: agents, events, context, permissions, research, tools, workshop, audit (Pablo)
   event-bus/    HubClient: connect, emit, on, request/response, say, setState, audit              (Pablo)
   voice/        Browser TTS (VoiceOutput → tts_*) + STT (VoiceInput → stt_transcript), per-agent voices (Andrea)
-  ui/           Shared face + floating windows + useHub(agent) viewer hook, themed per agent color (Andrea)
+  ui/           Shared 3D face (Three.js, procedural mask, looks around, glitches) + floating windows + useHub(agent) (Andrea)
   permissions/  Risk classification + authorization engine + GREEN agent runtime                  (Juanda)
   audit/        Audit view of the hub stream + lab.validated guard                                (Juanda)
   tools/        Tool registry + allowlisted Docker executor                                       (Felipe)

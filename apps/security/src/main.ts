@@ -8,7 +8,7 @@
  *   WASP_HUB_URL                 hub address (default ws://localhost:7331)
  *   WASP_SECURITY_LANG           es | en (spoken lines). Default es
  *   WASP_PERMISSION_TIMEOUT_MS   expire pending permissions after N ms. Default 0 = never (live demo)
- *   WASP_SECURITY_UI_PORT        port for the GREEN face (default 7004, 0 = off)
+ *   GREEN face: npm run security:ui  (Vite + @wasp/ui on http://localhost:7004)
  *
  * Solo rehearsal on one PC:  npm run hub · npm run stubs -- researcher operator · npm run security · npm run architect
  */
@@ -18,7 +18,6 @@ import path from 'node:path';
 import { connectHub } from '@wasp/event-bus';
 import { AuditLog } from '@wasp/audit';
 import { SecurityAgent } from '@wasp/permissions';
-import { startUiServer } from './serve-ui';
 
 const log = (m: string) => console.log(`[green ${new Date().toISOString().slice(11, 19)}] ${m}`);
 const lang = (process.env.WASP_SECURITY_LANG === 'en' ? 'en' : 'es') as 'es' | 'en';
@@ -38,13 +37,11 @@ hub.onAny((e) => {
 });
 hub.on('hub_error', (e) => log(`HUB REJECTED: ${e.payload.message}`));
 
-const uiPort = Number(process.env.WASP_SECURITY_UI_PORT ?? 7004);
-const stopUi = uiPort > 0 ? startUiServer(uiPort, hub.url) : () => {};
+log('GREEN face: npm run security:ui  →  http://localhost:7004');
 
 function shutdown() {
   log('shutting down');
   green.stop();
-  stopUi();
   hub.close();
   process.exit(0);
 }

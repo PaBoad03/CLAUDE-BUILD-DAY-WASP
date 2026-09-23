@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AGENTS } from "@wasp/shared-types";
-import { AgentFace } from "./components/AgentFace";
+import { AgentFace3D, attentionFor } from "@wasp/ui";
 import { EventLog } from "./components/EventLog";
 import { CommunicationWindow, SourcesWindow, VerificationWindow } from "./components/ResearchWindows";
 import { useHub } from "./hooks/useHub";
@@ -70,8 +70,7 @@ export function App() {
 
       <div className="stage">
         <div className="stage__face">
-          <AgentFace color={AGENTS.researcher.hex} state={hub.faceState} speaking={speaking} label="MAGENTA" />
-          <p className="stage__detail">{detail}</p>
+          <AgentFace3D color={AGENTS.researcher.hex} state={hub.faceState} speaking={speaking} label="MAGENTA" lookAt={attentionFor("researcher", hub.messages)} detail={detail} />
         </div>
 
         <div className="stage__windows">

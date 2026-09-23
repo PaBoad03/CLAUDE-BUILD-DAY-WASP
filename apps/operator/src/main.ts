@@ -4,7 +4,7 @@
  *   npm run operator                      # real Docker. Set WASP_HUB_URL=ws://<pablo-ip>:7331 on Felipe's PC
  *   npm run operator -- --fake-docker     # no Docker: registers as a STUB, results can never validate the lab
  *   npm run operator -- --build           # pre-demo: build wasp/sandbox:latest + pull nginx:alpine, then exit
- *   npm run operator -- --ui-port 0       # do not serve the ORANGE face (default port 7003)
+ *   npm run operator:ui                   # the ORANGE face on http://localhost:7003 (Vite + @wasp/ui)
  *
  * Solo testing on one PC:  npm run hub · npm run stubs -- researcher security · npm run operator -- --fake-docker · npm run architect
  */
@@ -13,7 +13,6 @@ import os from 'node:os';
 import { connectHub } from '@wasp/event-bus';
 import { DockerCliDriver, FakeDriver, ToolRegistry, labState, type SandboxDriver } from '@wasp/tools';
 import { OperatorAgent } from './agent';
-import { startUiServer } from './ui-server';
 
 const argv = process.argv.slice(2);
 const flag = (n: string) => argv.includes(n);
@@ -69,13 +68,11 @@ hub.onAny((e) => {
 });
 hub.on('hub_error', (e) => log(`HUB REJECTED: ${e.payload.message}`));
 
-const uiPort = Number(opt('--ui-port', process.env.WASP_OPERATOR_UI_PORT ?? '7003'));
-const stopUi = uiPort > 0 ? startUiServer(uiPort, hub.url) : () => {};
+log('ORANGE face: npm run operator:ui  →  http://localhost:7003');
 
 function shutdown() {
   log('shutting down');
   agent.stop();
-  stopUi();
   hub.close();
   process.exit(0);
 }

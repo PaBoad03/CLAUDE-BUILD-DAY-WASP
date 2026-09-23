@@ -11,8 +11,10 @@
     "./styles.css": "./src/styles.css"
   },
   "dependencies": {
+    "@types/three": "^0.170.0",
     "@wasp/event-bus": "*",
-    "@wasp/shared-types": "*"
+    "@wasp/shared-types": "*",
+    "three": "^0.170.0"
   },
   "peerDependencies": {
     "react": "^18.3.1",

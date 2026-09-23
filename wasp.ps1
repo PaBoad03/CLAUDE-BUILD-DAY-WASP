@@ -72,6 +72,7 @@ $shell = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { '
 $windows = @()
 $windows += @{ title = 'WASP HUB';            cmd = 'npm run hub';                                         wait = 3 }
 $windows += @{ title = 'WASP GREEN security'; cmd = 'npm run security';                                    wait = 0 }
+$windows += @{ title = 'WASP GREEN face';     cmd = 'npm run security:ui';                                 wait = 0 }
 if ($Stubs) {
   $windows += @{ title = 'WASP STUBS (researcher, operator)'; cmd = 'npm run stubs -- researcher operator'; wait = 0 }
 } else {
@@ -79,6 +80,7 @@ if ($Stubs) {
   $windows += @{ title = 'WASP MAGENTA researcher'; cmd = 'npm run researcher';                             wait = 0 }
   $windows += @{ title = 'WASP MAGENTA face';       cmd = 'npm run researcher:ui';                          wait = 0 }
 }
+$windows += @{ title = 'WASP ORANGE face';    cmd = 'npm run operator:ui';                                 wait = 0 }
 $windows += @{ title = 'WASP CYAN face';   cmd = 'npm run architect:ui';                                    wait = 2 }
 $archCmd = if ($Request) { "npm run architect -- `"$($Request.Replace('"','\"'))`"" } else { 'npm run architect' }
 $windows += @{ title = 'WASP CYAN architect'; cmd = $archCmd;                                               wait = 0 }

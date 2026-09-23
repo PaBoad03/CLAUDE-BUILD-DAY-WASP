@@ -1,4 +1,4 @@
-import { AGENTS, AGENT_IDS, type AgentId, type SharedContext, type WaspEvent } from '@wasp/shared-types';
+import { AGENTS, AGENT_IDS, type AgentId, type AnyEvent, type HumanDecision, type PermissionRecord, type SharedContext, type WaspEvent } from '@wasp/shared-types';
 import { FloatingWindow } from './FloatingWindow';
 
 /** The visible agent-to-agent conversation (CONTEXT.md §8). */
@@ -50,17 +50,35 @@ export function AgentsWindow({ context }: { context: SharedContext | null }) {
 
 const PERM_CLASS: Record<string, string> = { GRANTED: 'good', AUTO_APPROVED: 'good', AWAITING_HUMAN: 'warn', PENDING: 'warn', DENIED: 'bad', CANCELLED: 'bad', BLOCKED: 'bad', EXPIRED: 'bad' };
 
-export function PermissionsWindow({ context, rows = 6 }: { context: SharedContext | null; rows?: number }) {
+export function PermissionsWindow({
+  context,
+  rows = 6,
+  title = 'PERMISSIONS',
+  onAnswer,
+}: {
+  context: SharedContext | null;
+  rows?: number;
+  title?: string;
+  /** When given, the human can answer the pending permission here (SÍ / NO / STOP). */
+  onAnswer?: (permission: PermissionRecord, decision: Exclude<HumanDecision, 'AMBIGUOUS'>, raw: string) => void;
+}) {
   const perms = (context?.permissions ?? []).slice(-rows).reverse();
   const awaiting = perms.find((p) => p.status === 'AWAITING_HUMAN');
   return (
-    <FloatingWindow title="PERMISSIONS" meta={awaiting ? 'HUMAN APPROVAL REQUIRED' : undefined} className={awaiting ? 'win--alert' : ''}>
+    <FloatingWindow title={title} meta={awaiting ? 'HUMAN APPROVAL REQUIRED' : undefined} className={awaiting ? 'win--alert' : ''}>
       {awaiting && (
         <div className="review">
           <div className="review__row"><b>ACTION</b><span>{awaiting.operation}</span></div>
           <div className="review__row"><b>AGENT</b><span>{awaiting.requested_by.toUpperCase()}</span></div>
           <div className="review__row"><b>RISK</b><span className={`risk-${awaiting.risk}`}>{awaiting.risk}</span></div>
           <p className="review__prompt">{awaiting.human_prompt}</p>
+          {onAnswer && (
+            <div className="review__buttons">
+              <button className="btn" onClick={() => onAnswer(awaiting, 'YES', 'sí')}>SÍ</button>
+              <button className="btn btn--ghost" onClick={() => onAnswer(awaiting, 'NO', 'no')}>NO</button>
+              <button className="btn btn--danger" onClick={() => onAnswer(awaiting, 'STOP', 'stop')}>STOP</button>
+            </div>
+          )}
         </div>
       )}
       {perms.length === 0 && <p className="muted">No permissions requested yet.</p>}
@@ -159,6 +177,53 @@ export function TaskWindow({ context }: { context: SharedContext | null }) {
         </ul>
       ) : null}
       {context?.final_response && <p className="small good">{context.final_response}</p>}
+    </FloatingWindow>
+  );
+}
+
+/** What ORANGE actually ran: commands, exit status, permission traffic. Derived from the event stream. */
+export function TerminalWindow({ events, rows = 18 }: { events: AnyEvent[]; rows?: number }) {
+  const lines: { key: string; text: string; cls: string }[] = [];
+  for (const e of events) {
+    switch (e.type) {
+      case 'permission_requested':
+        if (e.from === 'operator') lines.push({ key: e.id, text: `→ security  ${e.payload.operation}  risk ${e.payload.proposed_risk ?? '?'}`, cls: 'warn' });
+        break;
+      case 'permission_granted':
+        lines.push({ key: e.id, text: `← security  ${e.payload.status} ${e.payload.operation} (${e.payload.decided_by}${e.payload.human_raw ? ` "${e.payload.human_raw}"` : ''})`, cls: 'good' });
+        break;
+      case 'permission_denied':
+      case 'permission_cancelled':
+        lines.push({ key: e.id, text: `← security  ${e.payload.status} ${e.payload.operation}`, cls: 'bad' });
+        break;
+      case 'tool_started':
+        lines.push({ key: e.id, text: `$ ${e.payload.tool_id}`, cls: '' });
+        break;
+      case 'sandbox_test':
+        lines.push({ key: e.id, text: `  wasp-sandbox> ${e.payload.command}`, cls: 'muted' });
+        break;
+      case 'tool_finished': {
+        const out = (e.payload.output as { stdout?: string } | undefined)?.stdout;
+        if (out) for (const l of String(out).trim().split('\n').slice(-4)) lines.push({ key: `${e.id}${l}`, text: `  ${l}`, cls: 'muted' });
+        lines.push({ key: `${e.id}s`, text: `  ${e.payload.status.toUpperCase()}${e.payload.stub ? ' [STUB]' : ''}  ${e.payload.summary ?? e.payload.error ?? ''}`, cls: e.payload.status === 'success' ? 'good' : 'bad' });
+        break;
+      }
+      case 'validation_result':
+        lines.push({ key: e.id, text: `validation → validated=${e.payload.validated}${e.payload.stub ? ' [STUB]' : ''}: ${e.payload.summary}`, cls: e.payload.validated ? 'good' : 'warn' });
+        break;
+      default:
+        break;
+    }
+  }
+  const recent = lines.slice(-rows);
+  return (
+    <FloatingWindow title="TERMINAL" meta={`${lines.length}`}>
+      {recent.length === 0 && <p className="muted">No commands yet.</p>}
+      <pre className="term">
+        {recent.map((l) => (
+          <div key={l.key} className={l.cls}>{l.text}</div>
+        ))}
+      </pre>
     </FloatingWindow>
   );
 }

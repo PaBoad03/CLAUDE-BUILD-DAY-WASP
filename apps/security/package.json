@@ -3,16 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "GREEN — Security / Authorization / Auditor agent process + GREEN face UI. Owner: Juanda.",
+  "description": "GREEN — Security / Authorization / Auditor agent process + GREEN face. Owner: Juanda.",
   "main": "./src/main.ts",
   "scripts": {
     "start": "tsx src/main.ts",
-    "ui": "tsx src/serve-ui.ts"
+    "ui": "vite",
+    "ui:build": "vite build"
   },
   "dependencies": {
     "@wasp/audit": "*",
     "@wasp/event-bus": "*",
     "@wasp/permissions": "*",
-    "@wasp/shared-types": "*"
+    "@wasp/shared-types": "*",
+    "@wasp/ui": "*",
+    "@wasp/voice": "*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.8"
   }
 }

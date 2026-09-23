@@ -3,17 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "ORANGE — Operator / Sandbox agent: Docker lab, allowlisted tools, honest results. Owner: Felipe.",
+  "description": "ORANGE — Operator / Sandbox agent: Docker lab, allowlisted tools, honest results + ORANGE face. Owner: Felipe.",
   "main": "./src/main.ts",
   "scripts": {
     "start": "tsx src/main.ts",
     "start:fake": "tsx src/main.ts --fake-docker",
     "sandbox:build": "tsx src/main.ts --build",
+    "ui": "vite",
+    "ui:build": "vite build",
     "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@wasp/event-bus": "*",
     "@wasp/shared-types": "*",
-    "@wasp/tools": "*"
+    "@wasp/tools": "*",
+    "@wasp/ui": "*",
+    "@wasp/voice": "*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.8"
   }
 }

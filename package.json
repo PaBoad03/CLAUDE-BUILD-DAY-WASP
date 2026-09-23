@@ -16,7 +16,9 @@
     "researcher:ui": "npm run dev -w @wasp/researcher",
     "researcher": "node --env-file-if-exists=.env --import tsx apps/researcher/src/agent/main.ts",
     "operator": "node --env-file-if-exists=.env --import tsx apps/operator/src/main.ts",
+    "operator:ui": "npm run ui -w @wasp/operator",
     "security": "node --env-file-if-exists=.env --import tsx apps/security/src/main.ts",
+    "security:ui": "npm run ui -w @wasp/security",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test \"apps/**/*.test.ts\" \"packages/**/*.test.ts\""
   },
