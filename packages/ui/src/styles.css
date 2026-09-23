@@ -157,6 +157,24 @@ a { color: inherit; }
 .ask__input { flex: 1; background: transparent; color: var(--text); border: 1px solid color-mix(in srgb, var(--agent) 45%, transparent); padding: 6px 8px; font: inherit; font-size: 12px; }
 .ask__input:focus { outline: none; border-color: var(--agent); box-shadow: 0 0 10px color-mix(in srgb, var(--agent) 35%, transparent); }
 
+/* ---- listening feedback (CYAN) ----------------------------------------- */
+.listen { width: min(100%, 420px); border: 1px solid color-mix(in srgb, var(--agent) 35%, transparent); background: var(--panel); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.listen--on { border-color: var(--agent); box-shadow: 0 0 16px color-mix(in srgb, var(--agent) 35%, transparent); }
+.listen--muted { border-color: var(--warn); }
+.listen__head { display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: .14em; color: var(--muted); }
+.listen--on .listen__head { color: var(--agent); text-shadow: 0 0 8px var(--agent); }
+.listen--muted .listen__head { color: var(--warn); text-shadow: none; }
+.listen__dot { width: 8px; height: 8px; border-radius: 50%; background: #333; }
+.listen--on .listen__dot { background: var(--bad); box-shadow: 0 0 10px var(--bad); animation: blink 1s infinite; }
+.listen--muted .listen__dot { background: var(--warn); animation: none; }
+.listen__meter { display: flex; gap: 3px; height: 18px; align-items: flex-end; }
+.listen__bar { flex: 1; height: 100%; background: color-mix(in srgb, var(--agent) 12%, transparent); transform-origin: bottom; transform: scaleY(.25); transition: transform .06s, background .06s; }
+.listen__bar--on { background: var(--agent); box-shadow: 0 0 6px var(--agent); transform: scaleY(1); }
+.listen__bar:nth-child(n+19).listen__bar--on { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.listen__text { margin: 0; min-height: 2.6em; font-size: 15px; line-height: 1.3; color: var(--text); }
+.listen__text--empty { color: var(--muted); }
+.listen__sent { margin: 0; font-size: 11.5px; color: var(--muted); border-top: 1px dashed color-mix(in srgb, var(--agent) 30%, transparent); padding-top: 6px; }
+
 /* ---- 3D face ----------------------------------------------------------- */
 .face3d { position: relative; width: 100%; flex: 1; min-height: 320px; display: flex; flex-direction: column; }
 .face3d__canvas { flex: 1; min-height: 0; }

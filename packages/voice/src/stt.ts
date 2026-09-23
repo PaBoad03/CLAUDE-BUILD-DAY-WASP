@@ -43,6 +43,8 @@ function ctor(): RecognitionCtor | null {
 export class VoiceInput {
   private rec: RecognitionLike | null = null;
   private wantListening = false;
+  /** While true, results are dropped (e.g. while this PC's own TTS is speaking, so WASP does not hear itself). */
+  muted = false;
   onTranscript: TranscriptHandler = () => {};
   onListeningChange: (listening: boolean) => void = () => {};
   onError: (error: string) => void = () => {};
@@ -65,6 +67,7 @@ export class VoiceInput {
     rec.continuous = this.opts.continuous ?? true;
     rec.interimResults = this.opts.interim ?? true;
     rec.onresult = (ev) => {
+      if (this.muted) return;
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const r = ev.results[i];
         const alt = r[0];

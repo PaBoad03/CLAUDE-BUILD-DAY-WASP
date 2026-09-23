@@ -19,7 +19,7 @@ export interface HumanIO {
 }
 
 export interface CliHumanOptions {
-  hub: Pick<HubClient, 'on'>;
+  hub: Pick<HubClient, 'on' | 'say'>;
   autoAnswer?: string;
   log?: (m: string) => void;
 }
@@ -34,12 +34,18 @@ export class CliHuman implements HumanIO {
     // Voice / UI answers resolve the pending question, whoever asked it.
     this.offs.push(
       o.hub.on('stt_transcript', (e) => {
-        if (e.payload.final && this.pending) this.resolve(e.payload.text);
+        if (e.payload.final && this.pending) this.resolve(e.payload.text, 'voice');
       }),
       o.hub.on('user_message', (e) => {
-        if (e.from === 'human' && this.pending) this.resolve(e.payload.text);
+        if (e.from === 'human' && this.pending) this.resolve(e.payload.text, 'ui');
       }),
     );
+  }
+
+  /** Spoken + visible acknowledgement, so the human knows WASP took exactly these words. */
+  private acknowledge(text: string): void {
+    const short = text.length > 90 ? `${text.slice(0, 87)}…` : text;
+    this.o.hub.say('human', `Te escuché: “${short}”.`, 'heard');
   }
 
   async ask(prompt: string): Promise<string> {
@@ -54,9 +60,10 @@ export class CliHuman implements HumanIO {
     });
   }
 
-  private resolve(answer: string): void {
+  private resolve(answer: string, source: 'voice' | 'ui' | 'stdin' = 'stdin'): void {
     const p = this.pending;
     this.pending = null;
+    if (p && source !== 'stdin') this.acknowledge(answer);
     p?.(answer);
   }
 
