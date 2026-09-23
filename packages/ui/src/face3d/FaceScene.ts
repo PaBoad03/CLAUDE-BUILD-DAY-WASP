@@ -16,7 +16,26 @@ import { GlitchPass } from 'three/examples/jsm/postprocessing/GlitchPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RGBShiftShader } from 'three/examples/jsm/shaders/RGBShiftShader.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { FaceState } from '@wasp/shared-types';
+import maskUrl from '../../assets/mask.glb?url';
+
+/**
+ * The mask model: packages/ui/assets/mask.glb (Pablo's). Loaded, centered, scaled to MASK_HEIGHT.
+ * Eyes and mouth are WASP's own glowing parts, placed relative to the model's bounding box —
+ * tune the fractions below if they do not sit where the model's features are.
+ */
+const MASK_HEIGHT = 2.4;
+/** eye x as a fraction of the mask width (from center), y as a fraction of height (from center), z offset in front of the surface */
+const EYE_X = 0.2;
+const EYE_Y = 0.1;
+const EYE_Z = 0.02;
+const EYE_RADIUS = 0.13;
+/** mouth y as a fraction of height (from center, negative = below) */
+const MOUTH_Y = -0.28;
+const SHOW_MOUTH = true;
+/** keep the model's own texture (true) or paint it in phosphor white (false) */
+const KEEP_TEXTURE = true;
 
 export type LookTarget = 'center' | 'left' | 'right' | 'up' | 'human' | 'away';
 
@@ -94,8 +113,10 @@ export class FaceScene {
   private rgb: ShaderPass;
 
   private head = new THREE.Group();
+  private maskGroup: THREE.Group;
   private maskMat: THREE.MeshStandardMaterial;
   private edgeMat: THREE.LineBasicMaterial;
+  private maskMats: THREE.MeshStandardMaterial[] = [];
   private eyeMats: THREE.MeshStandardMaterial[] = [];
   private eyes: THREE.Group[] = [];
   private eyeLids: THREE.Group[] = [];
@@ -166,29 +187,20 @@ export class FaceScene {
     ring2.position.z = -0.9;
     this.scene.add(ring2);
 
-    // ---- mask
-    const geo = buildMaskGeometry();
-    this.maskMat = new THREE.MeshStandardMaterial({ color: 0xb9c0cc, roughness: 0.62, metalness: 0.12, flatShading: true, emissive: this.agent, emissiveIntensity: 0.04 });
-    const mask = new THREE.Mesh(geo, this.maskMat);
-    this.head.add(mask);
+    // ---- mask: Pablo's model, with the procedural one as fallback if the file cannot be loaded
+    this.maskMat = new THREE.MeshStandardMaterial({ color: 0xb9c0cc, roughness: 0.62, metalness: 0.12, emissive: this.agent, emissiveIntensity: 0.04 });
     this.edgeMat = new THREE.LineBasicMaterial({ color: this.agent, transparent: true, opacity: 0.28 });
-    this.head.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 18), this.edgeMat));
+    this.maskGroup = new THREE.Group();
+    this.head.add(this.maskGroup);
 
-    // ---- eyes (in the sockets)
+    // ---- eyes: plain glowing orbs, no pupils. Placed once the model's size is known.
     for (const sx of [-1, 1]) {
       const lid = new THREE.Group();
-      lid.position.set(sx * 0.4, 0.27, 0.66);
+      lid.position.set(sx * 0.35, 0.25, 0.6);
       const eye = new THREE.Group();
       const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: this.agent, emissiveIntensity: 1.2, roughness: 0.2 });
       this.eyeMats.push(mat);
-      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.165, 24, 18), mat);
-      eye.add(ball);
-      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.07, 16, 12), new THREE.MeshBasicMaterial({ color: 0x050608 }));
-      pupil.position.z = 0.125;
-      eye.add(pupil);
-      const iris = new THREE.Mesh(new THREE.TorusGeometry(0.082, 0.013, 8, 32), new THREE.MeshBasicMaterial({ color: this.agent }));
-      iris.position.z = 0.125;
-      eye.add(iris);
+      eye.add(new THREE.Mesh(new THREE.SphereGeometry(EYE_RADIUS, 24, 18), mat));
       lid.add(eye);
       this.eyes.push(eye);
       this.eyeLids.push(lid);
@@ -200,11 +212,13 @@ export class FaceScene {
     for (let i = 0; i < 7; i++) {
       const bar = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.12, 0.06), this.mouthMat);
       bar.position.set((i - 3) * 0.13, -0.5, 0.74);
+      bar.visible = SHOW_MOUTH;
       this.mouthBars.push(bar);
       this.head.add(bar);
     }
 
     this.scene.add(this.head);
+    this.loadMask();
 
     // ---- drifting phosphor dust
     const count = 420;
@@ -237,6 +251,74 @@ export class FaceScene {
     this.observer.observe(host);
     this.resize();
     this.animate();
+  }
+
+  // ---------------------------------------------------------------- mask model
+
+  private loadMask(): void {
+    new GLTFLoader().load(
+      maskUrl,
+      (gltf) => {
+        if (this.disposed) return;
+        const model = gltf.scene;
+        // normalize: center at origin, MASK_HEIGHT tall, front toward the camera (+Z)
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const scale = MASK_HEIGHT / Math.max(size.y, 1e-6);
+        model.position.sub(center).multiplyScalar(scale);
+        model.scale.setScalar(scale);
+        model.traverse((o) => {
+          if (!(o as THREE.Mesh).isMesh) return;
+          const mesh = o as THREE.Mesh;
+          const src = mesh.material as THREE.MeshStandardMaterial;
+          if (KEEP_TEXTURE && src && 'map' in src && src.map) {
+            const m = new THREE.MeshStandardMaterial({ map: src.map, roughness: src.roughness ?? 0.7, metalness: Math.min(src.metalness ?? 0.2, 0.35), emissive: this.agent, emissiveIntensity: 0.04 });
+            mesh.material = m;
+            this.maskMats.push(m);
+          } else {
+            mesh.material = this.maskMat;
+            this.maskMats.push(this.maskMat);
+          }
+        });
+        this.maskGroup.clear();
+        this.maskGroup.add(model);
+        // phosphor edge lines on hard angles, in the agent color, under the same transform as the model
+        const edges = new THREE.Group();
+        model.updateMatrixWorld(true);
+        model.traverse((o) => {
+          if (!(o as THREE.Mesh).isMesh) return;
+          const mesh = o as THREE.Mesh;
+          const lines = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 40), this.edgeMat);
+          lines.applyMatrix4(mesh.matrixWorld);
+          edges.add(lines);
+        });
+        this.maskGroup.add(edges);
+        this.placeFeatures(new THREE.Box3().setFromObject(model));
+      },
+      undefined,
+      (err) => {
+        console.warn('[FaceScene] mask.glb not available, using the procedural mask', err);
+        const geo = buildMaskGeometry();
+        this.maskMat.flatShading = true;
+        this.maskMat.needsUpdate = true;
+        this.maskMats.push(this.maskMat);
+        this.maskGroup.add(new THREE.Mesh(geo, this.maskMat));
+        this.maskGroup.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 18), this.edgeMat));
+        this.placeFeatures(new THREE.Box3().setFromBufferAttribute(geo.getAttribute('position') as THREE.BufferAttribute));
+      },
+    );
+  }
+
+  /** Put WASP's eyes and mouth on the front of whatever mask is loaded. */
+  private placeFeatures(box: THREE.Box3): void {
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const front = box.max.z + EYE_Z;
+    this.eyeLids[0].position.set(center.x - size.x * EYE_X, center.y + size.y * EYE_Y, front);
+    this.eyeLids[1].position.set(center.x + size.x * EYE_X, center.y + size.y * EYE_Y, front);
+    const spacing = Math.min(0.13, (size.x * 0.5) / 7);
+    this.mouthBars.forEach((bar, i) => bar.position.set(center.x + (i - 3) * spacing, center.y + size.y * MOUTH_Y, front));
   }
 
   // ---------------------------------------------------------------- public
@@ -319,9 +401,12 @@ export class FaceScene {
     }
     this.mouthMat.emissive.copy(this.tintColor);
     this.mouthMat.emissiveIntensity = 1.3 * s.glow * s.power;
-    this.maskMat.emissive.copy(this.tintColor);
-    this.maskMat.emissiveIntensity = 0.04 * s.glow * s.power;
-    this.maskMat.color.setRGB(0.725 * (0.3 + 0.7 * s.power), 0.753 * (0.3 + 0.7 * s.power), 0.8 * (0.3 + 0.7 * s.power));
+    for (const m of this.maskMats) {
+      m.emissive.copy(this.tintColor);
+      m.emissiveIntensity = 0.04 * s.glow * s.power;
+      // dim the whole mask when powered down (OFFLINE); textured or not
+      m.color.setScalar(0.3 + 0.7 * s.power);
+    }
     this.edgeMat.color.copy(this.tintColor);
     this.edgeMat.opacity = 0.32 * s.power;
     this.ringMat.color.copy(this.tintColor);
