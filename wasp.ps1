@@ -112,7 +112,7 @@ if (-not $DryRun) {
 
 Say ''
 Say '------------------------------ ABRE ESTO ------------------------------' 'Cyan'
-Say '  CYAN    (tú hablas aquí)   http://localhost:5173   <- Edge o Chrome. Pulsa ENABLE VOICE y MIC.' 'Cyan'
+Say '  CYAN    (tú hablas aquí)   http://localhost:5173   <- SOLO Chrome o Edge (Brave/Firefox bloquean el micrófono). Pulsa ENABLE VOICE y MIC.' 'Cyan'
 if (-not $Stubs) { Say '  MAGENTA                    http://localhost:5174' 'Magenta' }
 Say '  ORANGE                     http://localhost:7003' 'DarkYellow'
 Say '  GREEN   (botones SÍ/NO)    http://localhost:7004' 'Green'
@@ -130,4 +130,21 @@ Say ''
 Say '  Apagar todo:  .\wasp.ps1 -Stop' 'DarkGray'
 Say '=======================================================================' 'Cyan'
 
-if (-not $DryRun -and -not $NoBrowser) { Start-Process 'http://localhost:5173' }
+if (-not $DryRun -and -not $NoBrowser) {
+  # The CYAN face needs the browser's speech recognition: Chrome or Edge. Brave/Firefox block it
+  # (the mic level moves but no text ever arrives). Open CYAN there even if the default browser is Brave.
+  $browser = @(
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+    "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+  ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if ($browser) {
+    Say "  abriendo la cara CYAN en $([IO.Path]::GetFileNameWithoutExtension($browser)) (el micrófono no funciona en Brave/Firefox)" 'DarkGray'
+    Start-Process $browser -ArgumentList '--new-window', 'http://localhost:5173'
+  } else {
+    Say '  Chrome/Edge no encontrados: abriendo en el navegador por defecto. El MIC solo funciona en Chrome o Edge.' 'Yellow'
+    Start-Process 'http://localhost:5173'
+  }
+}

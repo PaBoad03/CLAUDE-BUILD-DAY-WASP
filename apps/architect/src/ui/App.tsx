@@ -38,6 +38,8 @@ export function App() {
   const [sent, setSent] = useState<{ text: string; kind: 'request' | 'authorization' } | null>(null);
   const [typed, setTyped] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Brave exposes SpeechRecognition but blocks it (privacy): the mic meter moves, no text ever arrives.
+  const isBrave = typeof (navigator as Navigator & { brave?: unknown }).brave !== 'undefined';
 
   const awaiting = hub.context?.permissions.find((p) => p.status === 'AWAITING_HUMAN') ?? null;
   const archState = hub.context?.agent_states.architect ?? 'OFFLINE';
@@ -160,6 +162,7 @@ export function App() {
         </button>
       </header>
       {error && <p className="degraded">{error}</p>}
+      {isBrave && <p className="degraded">Brave bloquea el reconocimiento de voz: el micrófono se oye pero nunca se transcribe. Abre esta cara en Chrome o Edge (la voz de WASP sí funciona aquí).</p>}
 
       <div className="stage">
         <div className="stage__face">
