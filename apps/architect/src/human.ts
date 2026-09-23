@@ -17,7 +17,7 @@ import type { HubClient } from '@wasp/event-bus';
 
 export interface HumanIO {
   /** Ask and wait for a raw answer (transcript / typed text). */
-  ask(prompt: string): Promise<string>;
+  ask(prompt: string, auto?: string | null): Promise<string>;
   close(): void;
 }
 
@@ -41,11 +41,16 @@ export class CliHuman implements HumanIO {
     );
   }
 
-  async ask(prompt: string): Promise<string> {
-    if (this.o.autoAnswer) {
-      console.log(`\n  CYAN asks you: ${prompt}  [auto-answer: ${this.o.autoAnswer}]`);
-      return this.o.autoAnswer;
+  /**
+   * Ask and wait. `auto` overrides the configured auto-answer for this question:
+   * a string answers immediately, `null` forces a real human answer even when WASP_AUTO_ANSWER is set.
+   */
+  async ask(prompt: string, auto: string | null | undefined = this.o.autoAnswer): Promise<string> {
+    if (auto) {
+      console.log(`\n  CYAN asks you: ${prompt}  [auto-answer: ${auto}]`);
+      return auto;
     }
+    if (!this.rl) this.rl = readline.createInterface({ input: stdin, output: stdout });
     return new Promise<string>((resolve) => {
       this.pending = resolve;
       // stdin and the face race; the first answer wins.

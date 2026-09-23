@@ -1,16 +1,17 @@
 /**
  * CYAN — Architect / Orchestrator (CLI entrypoint).
  *
- *   npm run architect -- "WASP, create a two-hour beginner network reconnaissance workshop."
- *   npm run architect                 # no request: WASP listens (mic / typed text on the CYAN face, or stdin)
- *   npm run architect:ui              # the CYAN face on http://localhost:5173
+ *   npm run architect -- "WASP, create a two-hour beginner network reconnaissance workshop."   # one run, then exit
+ *   npm run architect                 # no request: WASP listens, runs, and listens again (demo mode)
+ *   npm run architect:ui              # the CYAN face on http://localhost:5173 (Chrome/Edge for the mic)
  *
  * With Claude credentials (ANTHROPIC_API_KEY or `ant auth login`) Claude drives the orchestration
  * through structured tool calls (./orchestrator.ts). Without them — or with --deterministic /
  * WASP_ARCHITECT_MODE=deterministic — the fixed reference flow runs (./deterministic.ts) and says so.
  *
  * Env: WASP_HUB_URL, WASP_CLAUDE_MODEL (default claude-opus-5), WASP_CLAUDE_EFFORT (low|medium|high|xhigh|max, default medium),
- *      WASP_AUTO_ANSWER=yes|no|stop|maybe (non-interactive human), WASP_ARCHITECT_MODE=claude|deterministic
+ *      WASP_AUTO_ANSWER=yes|no|stop|maybe (non-interactive permission answers), WASP_AUTO_REQUEST=... (non-interactive request),
+ *      WASP_ARCHITECT_MODE=claude|deterministic
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -27,17 +28,6 @@ const log = (m: string) => console.log(`[cyan ${new Date().toISOString().slice(1
 
 const hub = await connectHub({ agent: 'architect', mode: 'real', meta: { host: 'pablo', engine: 'pending' }, log });
 const human = new CliHuman({ hub, autoAnswer: process.env.WASP_AUTO_ANSWER, log });
-
-// No request on the command line: WASP listens. The first thing the human says (mic on the CYAN face →
-// stt_transcript), types (CYAN face → user_message) or enters on stdin becomes the request.
-let request = argRequest;
-if (!request) {
-  hub.setState('LISTENING', 'waiting for the human');
-  const listener = new CliHuman({ hub, autoAnswer: process.env.WASP_AUTO_REQUEST, log });
-  request = (await listener.ask('WASP is listening. What do you need?')).trim() || 'WASP, create a two-hour beginner network reconnaissance workshop.';
-  listener.close();
-  log(`request: ${request}`);
-}
 
 hub.onAny((e) => {
   if (e.type === 'agent_message' && e.from !== 'architect') console.log(`  ${e.from.toUpperCase()} → ${String(e.to).toUpperCase()}: ${e.payload.message}`);
@@ -60,37 +50,61 @@ hub.onMine('permission_clarification_needed', async (evt) => {
   hub.emit('user_authorization', { permission_id: evt.payload.permission_id, decision: 'AMBIGUOUS', raw, channel: 'cli' }, { to: 'security', correlation_id: evt.payload.permission_id });
 });
 
-// ------------------------------------------------------------------ go
-
-const online = (a: 'researcher' | 'operator' | 'security') => (hub.isOnline(a) ? (hub.isStub(a) ? 'stub' : 'online') : 'OFFLINE');
-log(`agents: researcher=${online('researcher')} operator=${online('operator')} security=${online('security')}`);
-
-hub.setState('LISTENING');
-hub.emit('user_message', { text: request, channel: 'cli' }, { to: 'architect' });
+// ------------------------------------------------------------------ one orchestration
 
 const useClaude = !deterministicFlag && process.env.WASP_ARCHITECT_MODE !== 'deterministic' && hasClaudeCredentials();
-let final: string;
-if (useClaude) {
-  const model = process.env.WASP_CLAUDE_MODEL || DEFAULT_MODEL;
-  const effort = (process.env.WASP_CLAUDE_EFFORT as Effort | undefined) || 'medium';
-  log(`engine: Claude (${model}, effort ${effort})`);
-  hub.emit('decision_made', { decision: `Orchestrating with Claude (${model}).`, rationale: 'Claude decides the steps; the application executes them through the hub and owns authorization and validation status.' });
-  const orchestrator = new ClaudeOrchestrator({ hub, human, client: new Anthropic(), model, effort, log });
-  const result = await orchestrator.run(request);
-  final = result.final;
-  log(`done (${result.reason}) in ${result.iterations} steps — tokens in ${result.usage.input_tokens} (cached ${result.usage.cache_read_input_tokens}) / out ${result.usage.output_tokens}`);
-} else {
-  const why = deterministicFlag || process.env.WASP_ARCHITECT_MODE === 'deterministic' ? 'requested' : 'no Claude API credentials (set ANTHROPIC_API_KEY or run `ant auth login`)';
-  log(`engine: deterministic flow (${why})`);
-  hub.emit('warning', { message: `CYAN running without Claude: ${why}. The orchestration is a fixed script.` });
-  final = await deterministicFlow(hub, request, log);
+const model = process.env.WASP_CLAUDE_MODEL || DEFAULT_MODEL;
+const effort = (process.env.WASP_CLAUDE_EFFORT as Effort | undefined) || 'medium';
+const online = (a: 'researcher' | 'operator' | 'security') => (hub.isOnline(a) ? (hub.isStub(a) ? 'stub' : 'online') : 'OFFLINE');
+
+async function runOnce(request: string): Promise<void> {
+  log(`request: ${request}`);
+  log(`agents: researcher=${online('researcher')} operator=${online('operator')} security=${online('security')}`);
+  hub.emit('user_message', { text: request, channel: 'cli' }, { to: 'architect' });
+
+  let final: string;
+  try {
+    if (useClaude) {
+      log(`engine: Claude (${model}, effort ${effort})`);
+      hub.emit('decision_made', { decision: `Orquestando con Claude (${model}).`, rationale: 'Claude decide los pasos; la aplicación los ejecuta a través del hub y es dueña de la autorización y del estado de validación.' });
+      const result = await new ClaudeOrchestrator({ hub, human, client: new Anthropic(), model, effort, log }).run(request);
+      final = result.final;
+      log(`done (${result.reason}) in ${result.iterations} steps — tokens in ${result.usage.input_tokens} (cached ${result.usage.cache_read_input_tokens}) / out ${result.usage.output_tokens}`);
+    } else {
+      const why = deterministicFlag || process.env.WASP_ARCHITECT_MODE === 'deterministic' ? 'requested' : 'no Claude API credentials (set ANTHROPIC_API_KEY in .env)';
+      log(`engine: deterministic flow (${why})`);
+      hub.emit('warning', { message: `CYAN sin Claude: ${why}. La orquestación es un guion fijo.` });
+      final = await deterministicFlow(hub, request, log);
+    }
+  } catch (err) {
+    // Never die silently: the face would just show "architect offline".
+    final = `Algo falló en la orquestación: ${(err as Error).message}`;
+    log(`ERROR ${(err as Error).stack ?? (err as Error).message}`);
+    hub.emit('error', { message: final });
+    hub.say('human', final, 'error');
+    hub.setState('ERROR', 'orchestration failed');
+  }
+  console.log(`\n=== WASP ===\n${final}\n`);
+  console.log(`context revision ${hub.context?.revision}, state ${hub.context?.current_state}, audit entries ${hub.context?.audit.length}`);
 }
 
-console.log(`\n=== WASP ===\n${final}\n`);
-console.log(`context revision ${hub.context?.revision}, state ${hub.context?.current_state}, audit entries ${hub.context?.audit.length}`);
+// ------------------------------------------------------------------ go
 
-human.close();
-setTimeout(() => {
-  hub.close();
-  process.exit(0);
-}, 500);
+if (argRequest || process.env.WASP_AUTO_REQUEST) {
+  await runOnce(argRequest || process.env.WASP_AUTO_REQUEST!);
+  human.close();
+  setTimeout(() => {
+    hub.close();
+    process.exit(0);
+  }, 500);
+} else {
+  // Demo mode: listen → run → listen again, until Ctrl+C. The CYAN face (SEND) or stdin provide the request.
+  for (;;) {
+    hub.setState('LISTENING', 'esperando al humano');
+    hub.emit('session_state', { state: 'IDLE' });
+    const request = (await human.ask('WASP escucha. ¿Qué necesitas?', null)).trim();
+    if (!request) continue;
+    await runOnce(request);
+    log('listo — escuchando la siguiente petición (Ctrl+C para salir)');
+  }
+}

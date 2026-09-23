@@ -90,10 +90,15 @@ Say '==============================  WASP  ==============================' 'Cyan
 Say ("  Docker: " + $(if ($Stubs) { 'no aplica (stubs)' } elseif ($dockerUp) { 'REAL' } else { 'no disponible -> ORANGE en modo fake (nada se ejecuta de verdad, el lab nunca se valida)' })) $(if ($dockerUp -or $Stubs) { 'Green' } else { 'Yellow' })
 Say ''
 
+$logDir = Join-Path $root 'logs'
+if (-not $DryRun) { New-Item -ItemType Directory -Force $logDir | Out-Null }
+
 foreach ($w in $windows) {
-  Say ("  > " + $w.title.PadRight(34) + $w.cmd) 'DarkGray'
+  $logName = ($w.title -replace '^WASP ', '' -replace '[^A-Za-z0-9]+', '-').Trim('-').ToLower() + '.log'
+  Say ("  > " + $w.title.PadRight(34) + $w.cmd.PadRight(40) + "  logs\$logName") 'DarkGray'
   if (-not $DryRun) {
-    $inner = "`$host.UI.RawUI.WindowTitle = '$($w.title)'; Set-Location '$root'; $($w.cmd)"
+    # Every window also writes its output to logs\<name>.log so it can be read after the fact.
+    $inner = "`$host.UI.RawUI.WindowTitle = '$($w.title)'; Set-Location '$root'; $($w.cmd) 2>&1 | Tee-Object -FilePath 'logs\$logName'"
     Start-Process $shell -ArgumentList '-NoExit', '-Command', $inner | Out-Null
     if ($w.wait -gt 0) { Start-Sleep -Seconds $w.wait }
   }
@@ -127,7 +132,7 @@ if ($Request) {
 Say '  2. Cuando GREEN pida permiso, di "sí" en el MIC de CYAN, o pulsa SÍ en la cara GREEN.' 'White'
 Say '  3. Al terminar, para otra ronda: cierra la ventana "WASP CYAN architect" y corre  npm run architect  otra vez.' 'White'
 Say ''
-Say '  Apagar todo:  .\wasp.ps1 -Stop' 'DarkGray'
+Say '  Logs de cada proceso:  logs\*.log        Apagar todo:  .\wasp.ps1 -Stop' 'DarkGray'
 Say '=======================================================================' 'Cyan'
 
 if (-not $DryRun -and -not $NoBrowser) {

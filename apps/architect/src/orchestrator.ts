@@ -185,7 +185,7 @@ export class ClaudeOrchestrator {
   private readonly hub: HubLike;
   private readonly human: HumanIO;
   private readonly client: ClaudeLike;
-  private readonly model: string;
+  private model: string;
   private readonly effort: Effort;
   private readonly maxIterations: number;
   private readonly log: (m: string) => void;
@@ -226,7 +226,17 @@ export class ClaudeOrchestrator {
           messages,
         });
       } catch (err) {
-        const why = err instanceof Anthropic.APIError ? `Claude API error ${err.status}: ${err.message}` : (err as Error).message;
+        // Model id wrong or not enabled for this key (404): fall back to the default model once, and say so.
+        if (err instanceof Anthropic.NotFoundError && this.model !== DEFAULT_MODEL) {
+          const msg = `Modelo "${this.model}" no disponible (404). Usando ${DEFAULT_MODEL}.`;
+          this.log(msg);
+          this.hub.emit('warning', { message: msg });
+          this.hub.say('human', `El modelo ${this.model} no está disponible con esta clave; sigo con ${DEFAULT_MODEL}.`, 'model_fallback');
+          this.model = DEFAULT_MODEL;
+          iterations--;
+          continue;
+        }
+        const why = err instanceof Anthropic.AuthenticationError ? 'Claude API: clave inválida (401)' : err instanceof Anthropic.APIError ? `Claude API error ${err.status}: ${err.message}` : (err as Error).message;
         this.log(why);
         this.hub.emit('error', { message: why });
         return this.bail(`Perdí contacto con mi motor de razonamiento (${why}).`, 'api_error', iterations, usage);
