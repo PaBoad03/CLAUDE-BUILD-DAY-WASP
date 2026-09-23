@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AgentFace3D, AgentsWindow, AuditWindow, CommunicationWindow, EventLog, PermissionsWindow, ResearchStatusWindow, SandboxWindow, TaskWindow, WorkshopWindow, agentTheme, attentionFor, useHub } from '@wasp/ui';
-import { AGENT_VOICES, MicLevel, VoiceInput, VoiceOutput } from '@wasp/voice';
+import { AGENT_VOICES, MicLevel, VoiceInput, VoiceOutput, type SttStatus } from '@wasp/voice';
+
+const STT_LABEL: Record<string, string> = {
+  off: 'reconocedor apagado',
+  starting: 'reconocedor arrancando…',
+  listening: 'reconocedor listo, esperando audio',
+  audio: 'audio detectado, esperando voz',
+  speech: 'voz detectada, reconociendo…',
+  result: 'texto reconocido',
+  nomatch: 'oí voz pero no entendí palabras',
+  muted: 'descartado: CYAN estaba hablando',
+};
 
 /**
  * CYAN face — Pablo's PC. The human talks to WASP here.
@@ -22,6 +33,7 @@ export function App() {
   const [speaking, setSpeaking] = useState(false);
   const [listening, setListening] = useState(false);
   const [level, setLevel] = useState(0);
+  const [stt, setStt] = useState<SttStatus>('off');
   const [heard, setHeard] = useState('');
   const [sent, setSent] = useState<{ text: string; kind: 'request' | 'authorization' } | null>(null);
   const [typed, setTyped] = useState('');
@@ -64,6 +76,7 @@ export function App() {
       else meter.stop();
     };
     mic.onError = (e) => setError(`micrófono: ${e}`);
+    mic.onStatus = setStt;
     meter.onLevel = setLevel;
     meter.onError = (e) => setError(`micrófono: ${e}`);
   }, [voice, mic, meter, hub]);
@@ -165,6 +178,11 @@ export function App() {
               ))}
             </div>
             <p className={`listen__text ${heard ? '' : 'listen__text--empty'}`}>{heard || (listening ? '…' : '')}</p>
+            {listening && (
+              <p className={`listen__stt ${stt.startsWith('error') ? 'bad' : stt === 'result' || stt === 'speech' ? 'good' : 'muted'}`}>
+                STT: {stt.startsWith('error:') ? `error ${stt.slice(6)}` : STT_LABEL[stt] ?? stt} · {navigator.language}
+              </p>
+            )}
             {sent && (
               <p className="listen__sent">
                 <span className="good">✓ {sent.kind === 'authorization' ? 'respuesta enviada a GREEN' : 'petición enviada a CYAN'}</span> “{sent.text}”

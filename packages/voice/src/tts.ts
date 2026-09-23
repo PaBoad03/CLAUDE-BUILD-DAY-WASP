@@ -95,20 +95,31 @@ export class VoiceOutput {
     u.pitch = this.opts.pitch ?? 1.0;
     const voice = this.pickVoice(u.lang);
     if (voice) u.voice = voice;
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      clearInterval(watchdog);
+      clearTimeout(maxTimer);
+      this.onUtterance('end', next, ok);
+      this.setSpeaking(false);
+      this.flush();
+    };
     u.onstart = () => {
       this.setSpeaking(true);
       this.onUtterance('start', next, true);
     };
-    u.onend = () => {
-      this.onUtterance('end', next, true);
-      this.setSpeaking(false);
-      this.flush();
-    };
-    u.onerror = () => {
-      this.onUtterance('end', next, false);
-      this.setSpeaking(false);
-      this.flush();
-    };
+    u.onend = () => finish(true);
+    u.onerror = () => finish(false);
+    // Chrome/Edge sometimes never fire onend (interrupted or garbage-collected utterances). Without this
+    // the host would think we are still speaking — and keep the microphone muted forever.
+    let quiet = 0;
+    const watchdog = setInterval(() => {
+      if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) quiet++;
+      else quiet = 0;
+      if (quiet >= 3) finish(true);
+    }, 250);
+    const maxTimer = setTimeout(() => finish(true), 2000 + next.length * 90);
     window.speechSynthesis.speak(u);
   }
 
