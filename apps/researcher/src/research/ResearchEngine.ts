@@ -127,10 +127,10 @@ export function countStatuses(results: { verification_status: VerificationStatus
 export function narrative(c: Record<VerificationStatus, number>, official: number, mode: ResearchMode, degraded: boolean): string {
   const total = c.FOUND + c.VERIFIED + c.CONTRADICTED + c.UNKNOWN;
   const parts: string[] = [];
-  parts.push(`Architect, I found ${total} relevant source${total === 1 ? "" : "s"}${official ? `, ${official} official` : ""}.`);
-  if (c.CONTRADICTED > 0) parts.push(`${c.CONTRADICTED} contradict${c.CONTRADICTED === 1 ? "s" : ""} other sources.`);
-  if (c.VERIFIED === 0) parts.push("The procedure is documented but not experimentally validated in our environment.");
-  if (mode === "catalog") parts.push("Live web research was unavailable; results come from the curated catalog.");
-  else if (degraded) parts.push("Research ran in degraded mode.");
+  parts.push(`Arquitecto, encontré ${total} fuente${total === 1 ? "" : "s"} relevante${total === 1 ? "" : "s"}${official ? `, ${official} oficial${official === 1 ? "" : "es"}` : ""}.`);
+  if (c.CONTRADICTED > 0) parts.push(`${c.CONTRADICTED} contradice${c.CONTRADICTED === 1 ? "" : "n"} a otras fuentes.`);
+  if (c.VERIFIED === 0) parts.push("El procedimiento está documentado pero no validado experimentalmente en nuestro entorno.");
+  if (mode === "catalog") parts.push("La búsqueda web en vivo no estaba disponible; los resultados vienen del catálogo curado.");
+  else if (degraded) parts.push("La investigación corrió en modo degradado.");
   return parts.join(" ");
 }

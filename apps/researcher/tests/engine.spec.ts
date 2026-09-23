@@ -40,8 +40,8 @@ describe("ResearchEngine", () => {
     expect(out.degraded_reason).toMatch(/no credentials/);
     expect(out.results.length).toBeGreaterThan(0);
     expect(out.counts.VERIFIED).toBe(0);
-    expect(out.summary).toMatch(/not experimentally validated/);
-    expect(out.summary).toMatch(/curated catalog/);
+    expect(out.summary).toMatch(/no validado experimentalmente/);
+    expect(out.summary).toMatch(/catálogo curado/);
   });
 
   it("falls back to the catalog when the web source throws", async () => {
@@ -61,7 +61,7 @@ describe("ResearchEngine", () => {
     expect(out.degraded).toBe(false);
     expect(out.counts).toEqual({ FOUND: 1, VERIFIED: 0, CONTRADICTED: 1, UNKNOWN: 0 });
     expect(out.official_count).toBe(2);
-    expect(out.summary).toMatch(/1 contradicts/);
+    expect(out.summary).toMatch(/1 contradice/);
   });
 
   it("never emits VERIFIED even if a source tries to", async () => {

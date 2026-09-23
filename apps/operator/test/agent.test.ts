@@ -48,13 +48,13 @@ test('Docker offline: honest sandbox_state OFFLINE, warning, face ERROR, validat
   assert.equal(hub.ofType('sandbox_state')[0].payload.status, 'OFFLINE');
   assert.ok(hub.ofType('warning').length >= 1);
   assert.ok(hub.states().includes('ERROR'));
-  assert.ok(hub.said().some((m) => /Docker capability is unavailable/.test(m)));
+  assert.ok(hub.said().some((m) => /Docker no está disponible/.test(m)));
   await hub.deliver('validation_request', { request_id: 'v1', description: 'ping inside sandbox' }, 'architect', 'operator', 'v1');
   const vr = hub.ofType('validation_result')[0];
   assert.equal(vr.payload.validated, false);
   assert.equal(vr.correlation_id, 'v1');
   assert.equal(vr.to, 'architect');
-  assert.match(vr.payload.summary, /unavailable/);
+  assert.match(vr.payload.summary, /no está disponible/);
   assert.equal(hub.ofType('tool_started').length, 0);
 });
 
@@ -88,7 +88,7 @@ test('MEDIUM tool without permission_granted never executes (times out, honest r
   assert.equal(r.status, 'rejected');
   assert.equal(driver.sandbox, 'absent');
   assert.equal(hub.ofType('tool_started').length, 0);
-  assert.match(r.error ?? '', /No authorization/);
+  assert.match(r.error ?? '', /autorización/);
   assert.equal(hub.ofType('audit_event').at(-1)!.payload.approval_status, 'PENDING');
 });
 
@@ -128,9 +128,9 @@ test('GREEN offline → approval-requiring tool is not executed and CYAN is told
   await done;
   const r = lastFinished(hub, request_id);
   assert.equal(r.status, 'rejected');
-  assert.match(r.error ?? '', /Security agent is offline/);
+  assert.match(r.error ?? '', /Seguridad está desconectada/);
   assert.equal(driver.sandbox, 'absent');
-  assert.ok(hub.said().some((m) => /Security is offline/.test(m)));
+  assert.ok(hub.said().some((m) => /Seguridad está desconectada/.test(m)));
 });
 
 test('unknown tool and off-list args are rejected with no execution', async () => {

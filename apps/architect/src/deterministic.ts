@@ -19,20 +19,20 @@ export async function deterministicFlow(hub: HubLike, request: string, log: (m: 
   let validation: ValidationResult | null = null;
 
   hub.setState('COMMUNICATING');
-  hub.say('researcher', 'Researcher, I need evidence for a beginner network reconnaissance workshop.', 'research_request');
+  hub.say('researcher', 'Investigador, necesito evidencia para un taller de reconocimiento de red para principiantes.', 'research_request');
   try {
     const r = await hub.request('research_request', { request_id: newId('req'), question: request, scope: { level: 'beginner', duration_minutes: 120 } }, { to: 'researcher', expect: 'research_result', timeoutMs: 90_000 });
     research = r.payload;
     log(`research: ${research.results.length} results${research.stub ? ' [STUB]' : ''}`);
   } catch (err) {
-    const why = describe(err, 'Research agent');
-    notes.push(`${why}; the workshop has no researched evidence.`);
+    const why = describe(err, 'El agente de investigación');
+    notes.push(`${why}; el taller no tiene evidencia investigada.`);
     hub.emit('warning', { message: why });
     log(`research unavailable: ${why}`);
   }
 
   hub.setState('COMMUNICATING');
-  hub.say('operator', 'Operator, can you validate the connectivity exercise in our sandbox?', 'validation_request');
+  hub.say('operator', 'Operador, ¿puedes validar el ejercicio de conectividad en nuestro sandbox?', 'validation_request');
   try {
     const research_ids = research?.results.filter((r) => !r.stub).map((r) => r.id);
     const v = await hub.request(
@@ -43,8 +43,8 @@ export async function deterministicFlow(hub: HubLike, request: string, log: (m: 
     validation = v.payload;
     log(`validation: validated=${validation.validated}${validation.stub ? ' [STUB]' : ''} — ${validation.summary}`);
   } catch (err) {
-    const why = describe(err, 'Operator agent');
-    notes.push(`${why}; the laboratory could not be validated.`);
+    const why = describe(err, 'El agente operador');
+    notes.push(`${why}; el laboratorio no pudo validarse.`);
     hub.emit('warning', { message: why });
     log(`validation unavailable: ${why}`);
   }
@@ -54,7 +54,7 @@ export async function deterministicFlow(hub: HubLike, request: string, log: (m: 
   const validated = hub.context?.workshop.lab.validated ?? false;
   const workshop: WorkshopSpec = {
     ...(hub.context?.workshop ?? ({} as WorkshopSpec)),
-    title: 'Beginner Network Reconnaissance Workshop',
+    title: 'Taller de reconocimiento de red para principiantes',
     level: 'beginner',
     duration_minutes: 120,
     objectives: ['Understand what reconnaissance is', 'Run safe connectivity checks in an isolated lab', 'Read DNS and interface information'],
@@ -75,10 +75,10 @@ export async function deterministicFlow(hub: HubLike, request: string, log: (m: 
   };
   hub.emit('workshop_updated', { workshop, changed: ['*'] });
 
-  const parts = [`Pablo, the workshop is designed: "${workshop.title}", ${workshop.duration_minutes} minutes, ${workshop.agenda.length} blocks.`];
-  if (research) parts.push(`Research found ${research.results.length} sources, ${research.counts.VERIFIED} verified${research.stub ? ' (stub data)' : ''}.`);
+  const parts = [`Pablo, el taller está diseñado: "${workshop.title}", ${workshop.duration_minutes} minutos, ${workshop.agenda.length} bloques.`];
+  if (research) parts.push(`La investigación encontró ${research.results.length} fuentes, ${research.counts.VERIFIED} verificadas${research.stub ? ' (datos simulados)' : ''}.`);
   else parts.push(notes[0] ?? '');
-  parts.push(validated ? 'The laboratory was validated in the sandbox.' : `The laboratory is NOT validated: ${validation?.summary ?? notes.join(' ')}`);
+  parts.push(validated ? 'El laboratorio fue validado en el sandbox.' : `El laboratorio NO está validado: ${validation?.summary ?? notes.join(' ')}`);
   const final = parts.filter(Boolean).join(' ');
 
   hub.emit('final_response', { text: final, workshop });
@@ -89,7 +89,7 @@ export async function deterministicFlow(hub: HubLike, request: string, log: (m: 
 }
 
 export function describe(err: unknown, who: string): string {
-  if (err instanceof AgentUnavailableError) return `${who} is offline`;
-  if (err instanceof RequestTimeoutError) return `${who} did not answer in time`;
+  if (err instanceof AgentUnavailableError) return `${who} está desconectado`;
+  if (err instanceof RequestTimeoutError) return `${who} no respondió a tiempo`;
   return (err as Error).message;
 }

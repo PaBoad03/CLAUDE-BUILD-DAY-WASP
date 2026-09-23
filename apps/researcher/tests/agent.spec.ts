@@ -40,7 +40,7 @@ describe("ResearcherAgent (contract: docs/CONTRACT.md §4/§5)", () => {
     const complete = hub.ofType("agent_message").find((m) => m.payload.intent === "research_complete")!;
     expect(complete.to).toBe("architect");
     expect(complete.payload.speak).toBe(true);
-    expect(complete.payload.message).toMatch(/not experimentally validated/);
+    expect(complete.payload.message).toMatch(/not experimentally validated|no validado experimentalmente/);
 
     // Face states progressed and ended COMPLETE.
     const states = hub.states();
@@ -71,7 +71,7 @@ describe("ResearcherAgent (contract: docs/CONTRACT.md §4/§5)", () => {
     expect(hub.ofType("research_result")).toHaveLength(0);
     expect(hub.ofType("error")).toHaveLength(1);
     const failed = hub.ofType("agent_message").find((m) => m.payload.intent === "research_failed")!;
-    expect(failed.payload.message).toMatch(/could not complete/);
+    expect(failed.payload.message).toMatch(/no pude completar/);
     expect(hub.ofType("audit_event")[0]!.payload.status).toBe("failure");
     expect(hub.states().at(-1)).toBe("ERROR");
   });

@@ -68,7 +68,7 @@ export class OperatorAgent {
     this.hub.emit('sandbox_state', toSandboxState(lab));
     if (!lab.docker_available) {
       this.hub.setState('ERROR', 'Docker unavailable');
-      this.hub.say('architect', `Docker capability is unavailable. I cannot validate the laboratory.${this.o.stub ? ' [stub]' : ''}`, 'capability_unavailable');
+      this.hub.say('architect', `La capacidad de Docker no está disponible. No puedo validar el laboratorio.${this.o.stub ? ' [stub]' : ''}`, 'capability_unavailable');
       this.hub.emit('warning', { message: `Docker capability is unavailable: ${lab.last_error ?? 'unknown error'}` });
     } else {
       this.hub.setState('IDLE', `Docker ${lab.docker_version}`);
@@ -113,7 +113,7 @@ export class OperatorAgent {
     this.dockerAvailable = lab.docker_available;
     if (!lab.docker_available) {
       this.hub.setState('ERROR', 'Docker unavailable');
-      const msg = `Docker capability is unavailable. I cannot validate the laboratory.${this.o.stub ? ' [stub]' : ''}`;
+      const msg = `La capacidad de Docker no está disponible. No puedo validar el laboratorio.${this.o.stub ? ' [stub]' : ''}`;
       this.hub.say(to, msg, 'validation_unavailable');
       this.hub.emit('sandbox_state', toSandboxState(lab));
       reply(false, [], `${msg} (${lab.last_error ?? 'no details'})`);
@@ -122,7 +122,7 @@ export class OperatorAgent {
 
     const plan: PlanStep[] = req.tools?.length ? req.tools.map((tool_id) => ({ tool_id, input: DEFAULT_INPUTS[tool_id] ?? {} })) : DEFAULT_VALIDATION_PLAN;
     const needsApproval = plan.some((s) => this.o.registry.get(s.tool_id)?.requires_approval);
-    this.hub.say(to, needsApproval ? 'I can test this in the isolated sandbox. Creating it requires authorization from Security.' : 'I can test this in the isolated sandbox.', 'ack');
+    this.hub.say(to, needsApproval ? 'Puedo probarlo en el sandbox aislado. Crearlo requiere autorización de Seguridad.' : 'Puedo probarlo en el sandbox aislado.', 'ack');
 
     const tests: ToolResult[] = [];
     for (const step of plan) {
@@ -135,13 +135,13 @@ export class OperatorAgent {
     const validated = tests.length > 0 && tests.every((t) => t.status === 'success') && real.length > 0 && !this.o.stub;
     const last = tests[tests.length - 1];
     const summary = validated
-      ? `Laboratory validated: ${real.length} real test${real.length === 1 ? '' : 's'} passed inside the isolated sandbox (${real.map((t) => t.tool_id).join(', ')}).`
+      ? `Laboratorio validado: ${real.length} prueba${real.length === 1 ? '' : 's'} real${real.length === 1 ? '' : 'es'} superada${real.length === 1 ? '' : 's'} dentro del sandbox aislado (${real.map((t) => t.tool_id).join(', ')}).`
       : this.o.stub && tests.every((t) => t.status === 'success')
-        ? `Fake Docker driver: ${tests.length} steps ran, but nothing real was executed. Laboratory NOT validated. [stub]`
-        : `Laboratory NOT validated: ${last ? `${last.tool_id} → ${last.status}${last.summary ? ` (${last.summary})` : ''}` : 'no test ran'}.`;
+        ? `Docker simulado: ${tests.length} pasos corrieron, pero nada real se ejecutó. Laboratorio NO validado. [stub]`
+        : `Laboratorio NO validado: ${last ? `${last.tool_id} → ${last.status}${last.summary ? ` (${last.summary})` : ''}` : 'ninguna prueba corrió'}.`;
 
     this.hub.setState(validated ? 'SUCCESS' : 'WARNING', validated ? 'lab validated' : 'lab not validated');
-    this.hub.say(to, validated ? `Laboratory validated. ${real.length} tests passed in the sandbox.` : summary, validated ? 'validation_complete' : 'validation_failed');
+    this.hub.say(to, validated ? `Laboratorio validado. ${real.length} pruebas superadas en el sandbox.` : summary, validated ? 'validation_complete' : 'validation_failed');
     reply(validated, tests, summary);
   }
 
@@ -151,7 +151,7 @@ export class OperatorAgent {
     const spec = this.o.registry.get(req.tool_id);
     const started_at = new Date().toISOString();
     if (!spec) {
-      return this.finish(req, rejected(req, started_at, `Unknown tool "${req.tool_id}". Nothing executed.`, this.o.stub), { risk: 'LOW', approval_required: false });
+      return this.finish(req, rejected(req, started_at, `Herramienta desconocida "${req.tool_id}". Nada se ejecutó.`, this.o.stub), { risk: 'LOW', approval_required: false });
     }
 
     // Ask GREEN. Always — LOW tools do not wait for the answer, but GREEN sees and audits every request.
@@ -169,11 +169,11 @@ export class OperatorAgent {
     if (spec.requires_approval) {
       this.hub.setState('WAITING_FOR_PERMISSION', req.tool_id);
       if (!this.hub.isOnline('security')) {
-        const r = rejected(req, started_at, 'Security agent is offline. I cannot obtain authorization, so nothing was executed.', this.o.stub);
-        this.hub.say('architect', 'Security is offline. I cannot get authorization for this operation, so I will not run it.', 'security_offline');
+        const r = rejected(req, started_at, 'Seguridad está desconectada. No puedo obtener autorización, así que nada se ejecutó.', this.o.stub);
+        this.hub.say('architect', 'Seguridad está desconectada. No puedo obtener autorización para esta operación, así que no la ejecutaré.', 'security_offline');
         return this.finish(req, r, { risk: spec.risk, approval_required: true, approval_status: 'PENDING' });
       }
-      this.hub.say('security', `Security, I need authorization: ${spec.description}`, 'permission_request');
+      this.hub.say('security', `Seguridad, necesito autorización para ${req.tool_id === 'docker_sandbox' ? 'crear el sandbox aislado' : req.tool_id === 'sandbox_network_external' ? 'darle red externa al sandbox' : req.tool_id}.`, 'permission_request');
       let answer;
       try {
         answer = await this.hub.request('permission_requested', permission, {
@@ -183,20 +183,20 @@ export class OperatorAgent {
           timeoutMs: this.o.permissionTimeoutMs ?? 120_000,
         });
       } catch (err) {
-        const why = err instanceof AgentUnavailableError ? 'Security went offline before answering' : err instanceof RequestTimeoutError ? 'No authorization arrived in time' : (err as Error).message;
-        const r = rejected(req, started_at, `${why}. Nothing executed.`, this.o.stub);
-        this.hub.say('architect', `${why}. I did not execute ${req.tool_id}.`, 'permission_timeout');
+        const why = err instanceof AgentUnavailableError ? 'Seguridad se desconectó antes de responder' : err instanceof RequestTimeoutError ? 'No llegó ninguna autorización a tiempo' : (err as Error).message;
+        const r = rejected(req, started_at, `${why}. Nada se ejecutó.`, this.o.stub);
+        this.hub.say('architect', `${why}. No ejecuté ${req.tool_id}.`, 'permission_timeout');
         this.hub.setState('ERROR', 'no authorization');
         return this.finish(req, r, { risk: spec.risk, approval_required: true, approval_status: 'PENDING' });
       }
       decision = answer.payload;
       if (answer.type !== 'permission_granted') {
-        const r: ToolResult = { ...rejected(req, started_at, `Authorization ${decision.status.toLowerCase()} by ${decision.decided_by}. Nothing executed.`, this.o.stub), status: 'denied' };
-        this.hub.say('architect', decision.status === 'CANCELLED' ? 'Operation cancelled. Nothing was executed.' : 'Authorization denied. Nothing was executed.', 'permission_denied');
+        const r: ToolResult = { ...rejected(req, started_at, `Autorización ${decision.status === 'CANCELLED' ? 'cancelada' : 'denegada'} por ${decision.decided_by === 'human' ? 'el humano' : 'Seguridad'}. Nada se ejecutó.`, this.o.stub), status: 'denied' };
+        this.hub.say('architect', decision.status === 'CANCELLED' ? 'Operación cancelada. No se ejecutó nada.' : 'Autorización denegada. No se ejecutó nada.', 'permission_denied');
         this.hub.setState('IDLE');
         return this.finish(req, r, { risk: decision.risk, approval_required: true, approval_status: decision.status, human_raw: decision.human_raw, permission_id });
       }
-      this.hub.say('architect', 'Authorization received. Starting the sandbox.', 'authorized');
+      this.hub.say('architect', 'Autorización recibida. Iniciando el sandbox.', 'authorized');
     } else {
       this.hub.emit('permission_requested', permission, { to: 'security', correlation_id: permission_id });
     }

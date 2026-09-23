@@ -3,9 +3,12 @@
  *
  * Sources, first one wins:
  *   - WASP_AUTO_ANSWER=yes|no|stop|maybe   non-interactive (rehearsals, tests)
- *   - stt_transcript { final: true }        the voice layer (Andrea) heard the human
- *   - user_message from 'human'             a UI / HTTP bridge typed for the human
+ *   - user_message from 'human'             the CYAN face (dictated or typed, then SEND) or any HTTP bridge
  *   - stdin                                 the CLI
+ *
+ * The face dictates into a text box and the human presses SEND, so a half-recognised sentence is
+ * never taken as the request. Permission answers ("sí" / "no" / "stop") go straight to GREEN as
+ * user_authorization from the face; they do not pass through here.
  */
 
 import readline from 'node:readline/promises';
@@ -31,21 +34,11 @@ export class CliHuman implements HumanIO {
 
   constructor(private readonly o: CliHumanOptions) {
     if (!o.autoAnswer) this.rl = readline.createInterface({ input: stdin, output: stdout });
-    // Voice / UI answers resolve the pending question, whoever asked it.
     this.offs.push(
-      o.hub.on('stt_transcript', (e) => {
-        if (e.payload.final && this.pending) this.resolve(e.payload.text, 'voice');
-      }),
       o.hub.on('user_message', (e) => {
         if (e.from === 'human' && this.pending) this.resolve(e.payload.text, 'ui');
       }),
     );
-  }
-
-  /** Spoken + visible acknowledgement, so the human knows WASP took exactly these words. */
-  private acknowledge(text: string): void {
-    const short = text.length > 90 ? `${text.slice(0, 87)}…` : text;
-    this.o.hub.say('human', `Te escuché: “${short}”.`, 'heard');
   }
 
   async ask(prompt: string): Promise<string> {
@@ -55,12 +48,18 @@ export class CliHuman implements HumanIO {
     }
     return new Promise<string>((resolve) => {
       this.pending = resolve;
-      // stdin and hub events race; the first answer wins.
+      // stdin and the face race; the first answer wins.
       void this.rl?.question(`\n  CYAN asks you: ${prompt}  > `).then((a) => this.resolve(a.trim()), () => {});
     });
   }
 
-  private resolve(answer: string, source: 'voice' | 'ui' | 'stdin' = 'stdin'): void {
+  /** Spoken + visible acknowledgement, so the human knows WASP took exactly these words. */
+  private acknowledge(text: string): void {
+    const short = text.length > 90 ? `${text.slice(0, 87)}…` : text;
+    this.o.hub.say('human', `Te escuché: “${short}”.`, 'heard');
+  }
+
+  private resolve(answer: string, source: 'ui' | 'stdin' = 'stdin'): void {
     const p = this.pending;
     this.pending = null;
     if (p && source !== 'stdin') this.acknowledge(answer);

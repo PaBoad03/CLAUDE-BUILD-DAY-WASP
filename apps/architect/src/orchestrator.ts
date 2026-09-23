@@ -229,7 +229,7 @@ export class ClaudeOrchestrator {
         const why = err instanceof Anthropic.APIError ? `Claude API error ${err.status}: ${err.message}` : (err as Error).message;
         this.log(why);
         this.hub.emit('error', { message: why });
-        return this.bail(`I lost contact with my reasoning engine (${why}).`, 'api_error', iterations, usage);
+        return this.bail(`Perdí contacto con mi motor de razonamiento (${why}).`, 'api_error', iterations, usage);
       }
       usage.input_tokens += response.usage.input_tokens;
       usage.output_tokens += response.usage.output_tokens;
@@ -237,7 +237,7 @@ export class ClaudeOrchestrator {
 
       if (response.stop_reason === 'refusal') {
         this.log(`refusal: ${response.stop_details?.category ?? 'unknown'}`);
-        return this.bail('I cannot help with that request.', 'refusal', iterations, usage);
+        return this.bail('No puedo ayudar con esa petición.', 'refusal', iterations, usage);
       }
       if (response.stop_reason === 'pause_turn') {
         messages.push({ role: 'assistant', content: response.content });
@@ -245,7 +245,7 @@ export class ClaudeOrchestrator {
       }
       if (response.stop_reason === 'max_tokens') {
         this.hub.emit('warning', { message: 'Claude response truncated (max_tokens)' });
-        return this.bail('My answer was cut short.', 'max_tokens', iterations, usage);
+        return this.bail('Mi respuesta quedó cortada.', 'max_tokens', iterations, usage);
       }
 
       const toolUses = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
@@ -254,7 +254,7 @@ export class ClaudeOrchestrator {
 
       if (toolUses.length === 0) {
         // end_turn without finalize: publish what we have, honestly.
-        return this.finalizeFallback(text || 'Done.', 'end_turn', iterations, usage);
+        return this.finalizeFallback(text || 'Listo.', 'end_turn', iterations, usage);
       }
 
       messages.push({ role: 'assistant', content: response.content });
@@ -269,7 +269,7 @@ export class ClaudeOrchestrator {
       }
       messages.push({ role: 'user', content: results });
     }
-    return this.finalizeFallback('I ran out of steps while orchestrating.', 'max_iterations', iterations, usage);
+    return this.finalizeFallback('Me quedé sin pasos mientras orquestaba.', 'max_iterations', iterations, usage);
   }
 
   // ------------------------------------------------------------------ tools
@@ -309,8 +309,8 @@ export class ClaudeOrchestrator {
             }),
           };
         } catch (err) {
-          const why = describe(err, 'Research agent');
-          this.notes.push(`${why}; no researched evidence.`);
+          const why = describe(err, 'El agente de investigación');
+          this.notes.push(`${why}; no hay evidencia investigada.`);
           this.hub.emit('warning', { message: why });
           this.hub.setState('WARNING', why);
           return { content: `${why}. There is no research. Continue honestly without it.`, is_error: true };
@@ -340,8 +340,8 @@ export class ClaudeOrchestrator {
             }),
           };
         } catch (err) {
-          const why = describe(err, 'Operator agent');
-          this.notes.push(`${why}; the laboratory could not be validated.`);
+          const why = describe(err, 'El agente operador');
+          this.notes.push(`${why}; el laboratorio no pudo validarse.`);
           this.hub.emit('warning', { message: why });
           this.hub.setState('WARNING', why);
           return { content: `${why}. Nothing was executed; the lab is NOT validated.`, is_error: true };
@@ -397,10 +397,8 @@ export class ClaudeOrchestrator {
     this.hub.emit('workshop_updated', { workshop, changed: ['*'] });
 
     const stubResearch = this.research?.stub || workshop.research.some((r) => r.stub);
-    const labLine = validated
-      ? 'The laboratory was validated with real tests in the sandbox.'
-      : `The laboratory is NOT validated: ${note}`;
-    const researchLine = stubResearch ? 'Note: the research came from a stub, not real sources.' : '';
+    const labLine = validated ? 'El laboratorio fue validado con pruebas reales en el sandbox.' : `El laboratorio NO está validado: ${note}`;
+    const researchLine = stubResearch ? 'Nota: la investigación vino de un simulador, no de fuentes reales.' : '';
     const final = [w.spoken_summary.trim(), researchLine, labLine].filter(Boolean).join(' ');
 
     this.hub.emit('final_response', { text: final, workshop });
@@ -414,7 +412,7 @@ export class ClaudeOrchestrator {
   private finalizeFallback(text: string, reason: OrchestrationResult['reason'], iterations: number, usage: OrchestrationResult['usage']): OrchestrationResult {
     const ctx = this.hub.context;
     const validated = ctx?.workshop.lab.validated ?? false;
-    const final = `${text} ${validated ? 'The laboratory was validated in the sandbox.' : `The laboratory is NOT validated${this.notes.length ? `: ${this.notes.join(' ')}` : '.'}`}`.trim();
+    const final = `${text} ${validated ? 'El laboratorio fue validado en el sandbox.' : `El laboratorio NO está validado${this.notes.length ? `: ${this.notes.join(' ')}` : '.'}`}`.trim();
     this.hub.emit('final_response', { text: final, workshop: ctx?.workshop });
     this.hub.emit('speak_requested', { agent: 'architect', text: final });
     this.hub.say('human', final, 'final_response');

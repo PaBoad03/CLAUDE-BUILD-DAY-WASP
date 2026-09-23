@@ -18,7 +18,7 @@ export type HubLike = Pick<HubClient, "agent" | "onMine" | "emit" | "say" | "set
 export function spokenLine(summary: string, verified: number): string {
   const first = summary.split(/(?<=[.!?])\s+/)[0]?.trim() || summary.trim();
   if (verified > 0) return first;
-  return /not (experimentally )?validated|no verificad/i.test(first) ? first : `${first} Documented, but not experimentally validated.`;
+  return /not (experimentally )?validated|no (está )?(verificad|validad)/i.test(first) ? first : `${first} Documentado, pero no validado experimentalmente.`;
 }
 
 export interface ResearcherAgentOptions {
@@ -67,7 +67,7 @@ export class ResearcherAgent {
     this.log(`research request from ${replyTo}: ${req.question}`);
 
     this.setState("LISTENING", "request received");
-    this.hub.say(replyTo, "Research request received.", "research_ack", { request_id: req.request_id });
+    this.hub.say(replyTo, "Petición de investigación recibida.", "research_ack", { request_id: req.request_id });
 
     const mode = this.engine.plannedMode();
     this.setState("RESEARCHING", mode === "web" ? "searching the web" : "searching curated catalog");
@@ -123,7 +123,7 @@ export class ResearcherAgent {
       const detail = err instanceof Error ? err.message : String(err);
       this.log(`research failed: ${detail}`);
       this.hub.emit("error", { message: "Research failed", detail }, { correlation_id });
-      this.hub.say(replyTo, `Architect, I could not complete the research: ${detail}. I have no sources to report.`, "research_failed", {
+      this.hub.say(replyTo, `Arquitecto, no pude completar la investigación: ${detail}. No tengo fuentes que reportar.`, "research_failed", {
         request_id: req.request_id,
       });
       this.hub.audit({

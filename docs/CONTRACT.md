@@ -152,7 +152,8 @@ A `validation_request` without `tools` makes ORANGE run `docker_sandbox → sand
 
 **v1.1.1 — 2026-09-22 (voice + faces).** No payload changes. Conventions:
 - The voice layer is `@wasp/voice` (browser): `VoiceOutput` speaks this PC's `agent_message` / `speak_requested` and reports `tts_started` / `tts_finished`; `VoiceInput` (mic) emits `stt_transcript { text, final }` to `architect`. Only the CYAN face has a mic; GREEN interprets the words, the voice layer never authorizes.
-- `npm run architect` without a request waits for the first `stt_transcript { final: true }` or human `user_message` and uses it as the request. Human answers to `permission_required` arrive the same way.
+- `npm run architect` without a request waits for the first human `user_message` and uses it as the request. The CYAN face dictates into a text box and the human presses SEND (or says "envía"); `stt_transcript` is emitted for the record only. While a permission is `AWAITING_HUMAN`, the face sends the spoken/typed answer straight to GREEN as `user_authorization`. CYAN answers "Te escuché: …" for every text it takes.
+- Spoken lines are in Spanish across agents; `@wasp/voice` picks the TTS voice from the text (`lang: 'auto'`, Spanish by default) so an English technical line still gets an English voice.
 - Faces use `useHub(agent)` from `@wasp/ui` (viewer socket, `meta.role = 'ui'`) and `postAsHuman()` for buttons / typed text (`POST /events`, `from: 'human'`).
 
 ## 10. Adding something to the contract

@@ -101,7 +101,7 @@ test('happy path: research → validation → finalize; hub context decides vali
   assert.deepEqual(hub.ofType('validation_request')[0].payload.research_ids, ['res1']);
   assert.ok(hub.ofType('final_response').length === 1);
   assert.ok(hub.ofType('workshop_updated').length === 1);
-  assert.match(result.final, /validated with real tests/);
+  assert.match(result.final, /validado con pruebas reales/);
   // tool results were fed back
   const second = calls[1].messages.at(-1)!;
   assert.equal(second.role, 'user');
@@ -122,7 +122,7 @@ test('the model cannot claim validation: Docker offline → validated false even
   ]);
   const result = await new ClaudeOrchestrator({ hub, human, client }).run('req');
   assert.equal(result.workshop!.lab.validated, false);
-  assert.match(result.final, /NOT validated: Docker capability is unavailable/);
+  assert.match(result.final, /NO está validado: Docker capability is unavailable/);
   assert.equal(result.workshop!.research[0].verification_status, 'FOUND');
   assert.equal(hub.states().at(-1), 'WARNING');
 });
@@ -135,7 +135,7 @@ test('stub operator claiming success never validates', async () => {
   const { client } = scriptedClaude([[{ name: 'request_validation', input: { description: 'x', tools: [], research_ids: [] } }], [FINALIZE]]);
   const result = await new ClaudeOrchestrator({ hub, human, client }).run('req');
   assert.equal(result.workshop!.lab.validated, false);
-  assert.match(result.final, /NOT validated/);
+  assert.match(result.final, /NO está validado/);
 });
 
 test('offline researcher → error tool_result, loop continues, final answer says so', async () => {
@@ -146,7 +146,7 @@ test('offline researcher → error tool_result, loop continues, final answer say
   const result = await new ClaudeOrchestrator({ hub, human, client }).run('req');
   const fed = calls[1].messages.at(-1)!.content as Anthropic.ToolResultBlockParam[];
   assert.equal(fed[0].is_error, true);
-  assert.match(String(fed[0].content), /Research agent is offline/);
+  assert.match(String(fed[0].content), /agente de investigación está desconectado/);
   assert.ok(hub.ofType('warning').length >= 1);
   assert.equal(result.reason, 'finalized');
   assert.equal(result.workshop!.research.length, 0);
@@ -157,7 +157,7 @@ test('end_turn without finalize_workshop still publishes an honest final_respons
   const { client } = scriptedClaude(['I designed it.']);
   const result = await new ClaudeOrchestrator({ hub, human, client }).run('req');
   assert.equal(result.reason, 'end_turn');
-  assert.match(result.final, /NOT validated/);
+  assert.match(result.final, /NO está validado/);
   assert.equal(hub.ofType('final_response').length, 1);
 });
 

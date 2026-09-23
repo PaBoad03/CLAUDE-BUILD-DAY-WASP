@@ -156,6 +156,9 @@ a { color: inherit; }
 .ask { display: flex; gap: 6px; width: min(100%, 420px); }
 .ask__input { flex: 1; background: transparent; color: var(--text); border: 1px solid color-mix(in srgb, var(--agent) 45%, transparent); padding: 6px 8px; font: inherit; font-size: 12px; }
 .ask__input:focus { outline: none; border-color: var(--agent); box-shadow: 0 0 10px color-mix(in srgb, var(--agent) 35%, transparent); }
+.ask__input--multi { resize: none; font-size: 14px; line-height: 1.35; }
+.ask__side { display: flex; flex-direction: column; gap: 6px; }
+.ask__status { margin: 0; width: min(100%, 420px); font-size: 11px; letter-spacing: .08em; text-align: center; min-height: 1.4em; }
 
 /* ---- listening feedback (CYAN) ----------------------------------------- */
 .listen { width: min(100%, 420px); border: 1px solid color-mix(in srgb, var(--agent) 35%, transparent); background: var(--panel); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
